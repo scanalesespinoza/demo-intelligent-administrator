@@ -1,0 +1,80 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: assistant-api
+  namespace: demo-int-admin
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: assistant-readonly
+  namespace: demo-int-admin
+rules:
+  - apiGroups: ["", "apps", "events.k8s.io"]
+    resources: ["pods", "pods/log", "events", "configmaps", "deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: assistant-readonly-binding
+  namespace: demo-int-admin
+subjects:
+  - kind: ServiceAccount
+    name: assistant-api
+    namespace: demo-int-admin
+roleRef:
+  kind: Role
+  name: assistant-readonly
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assistant-api
+  namespace: demo-int-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assistant-api
+  template:
+    metadata:
+      labels:
+        app: assistant-api
+    spec:
+      serviceAccountName: assistant-api
+      containers:
+        - name: app
+          image: image-registry.openshift-image-registry.svc:5000/demo-int-admin/assistant-api:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: QUARKUS_HTTP_PORT
+              value: "8080"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: assistant-api
+  namespace: demo-int-admin
+spec:
+  selector:
+    app: assistant-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: assistant-api
+  namespace: demo-int-admin
+spec:
+  to:
+    kind: Service
+    name: assistant-api
+  port:
+    targetPort: http
