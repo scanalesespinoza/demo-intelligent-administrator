@@ -1,0 +1,35 @@
+name: Validate — Kubernetes Manifests (kubeconform)
+
+on:
+  pull_request:
+    paths:
+      - "k8s/**"
+  push:
+    branches: [ "main", "develop" ]
+    paths:
+      - "k8s/**"
+  workflow_dispatch:
+
+jobs:
+  kubeconform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          KUBECONFORM_VERSION="0.6.7"
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate k8s manifests
+        run: |
+          set -e
+          mapfile -t files < <(find k8s -type f \( -name '*.yml' -o -name '*.yaml' \))
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No k8s manifests found."
+            exit 0
+          fi
+          kubeconform -summary -strict -ignore-missing-schemas "${files[@]}"

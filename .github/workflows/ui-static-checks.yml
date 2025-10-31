@@ -1,0 +1,25 @@
+name: UI — Static checks (templates)
+
+on:
+  pull_request:
+    paths:
+      - "apps/assistant-ui/**"
+  push:
+    branches: [ "main", "develop" ]
+    paths:
+      - "apps/assistant-ui/**"
+  workflow_dispatch:
+
+jobs:
+  qute-templates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Validate compile-time templates
+        working-directory: apps/assistant-ui
+        run: mvn -B -DskipTests=true compile
