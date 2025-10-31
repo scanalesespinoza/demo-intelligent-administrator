@@ -45,10 +45,7 @@ jobs:
         module:
           - apps/assistant-api
           - apps/assistant-ui
-    if: ${{
-      (matrix.module == 'apps/assistant-api' && needs.detect-changes.outputs.assistant_api == 'true') ||
-      (matrix.module == 'apps/assistant-ui' && needs.detect-changes.outputs.assistant_ui == 'true')
-    }}
+    if: ${{ (matrix.module == 'apps/assistant-api' && needs.detect-changes.outputs.assistant_api == 'true') || (matrix.module == 'apps/assistant-ui' && needs.detect-changes.outputs.assistant_ui == 'true') }}
     defaults:
       run:
         working-directory: ${{ matrix.module }}
