@@ -1,7 +1,7 @@
 ---
 name: Validate — Kubernetes Manifests (kubeconform)
 
-on:
+'on':
   pull_request:
     paths:
       - "k8s/**"
