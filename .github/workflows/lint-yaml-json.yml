@@ -1,3 +1,4 @@
+---
 name: Lint — YAML & JSON
 
 on:
@@ -8,13 +9,13 @@ on:
       - "**/*.json"
       - "prompts/**"
   push:
-    branches: [ "main", "develop" ]
+    branches: ["main", "develop"]
     paths:
       - "**/*.yml"
       - "**/*.yaml"
       - "**/*.json"
       - "prompts/**"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   lint:

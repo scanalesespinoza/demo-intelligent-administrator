@@ -1,10 +1,11 @@
+---
 name: CI — Build & Test (assistant-api / assistant-ui)
 
 on:
   pull_request:
   push:
-    branches: [ "main", "develop", "feature/**" ]
-  workflow_dispatch:
+    branches: ["main", "develop", "feature/**"]
+  workflow_dispatch: {}
 
 env:
   MAVEN_OPTS: -Xmx2g

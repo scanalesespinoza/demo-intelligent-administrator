@@ -1,3 +1,4 @@
+---
 name: UI — Static checks (templates)
 
 on:
@@ -5,10 +6,10 @@ on:
     paths:
       - "apps/assistant-ui/**"
   push:
-    branches: [ "main", "develop" ]
+    branches: ["main", "develop"]
     paths:
       - "apps/assistant-ui/**"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   qute-templates:
