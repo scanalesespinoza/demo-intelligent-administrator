@@ -37,11 +37,18 @@ public class ApiClient {
 
             HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(apiUrl + "/chat"))
                     .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(15))
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(request)))
                     .build();
 
-            HttpClient client = HttpClient.newHttpClient();
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .build();
             HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new RuntimeException("Assistant API returned status " + response.statusCode());
+            }
             JsonNode root = mapper.readTree(response.body());
             if (root.has("reportJson") && !root.get("reportJson").isNull()) {
                 return mapper.treeToValue(root.get("reportJson"), Report.class);
