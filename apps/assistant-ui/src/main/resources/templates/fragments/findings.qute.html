@@ -1,0 +1,20 @@
+{#if report?.findings?.isNotEmpty}
+  {#for f in report.findings}
+    <article class="finding">
+      <h4>{f.service} — <span class="badge">{f.status}</span></h4>
+      <p><strong>Señales:</strong> {f.signals.join(', ')}</p>
+      <p><strong>Causa probable:</strong> {f.causeLikely} ({f.confidence*100}% confianza)</p>
+      <details>
+        <summary>Ver evidencia y detalles</summary>
+        <p><strong>Config Hints:</strong> {f.configHints}</p>
+        <ul>
+          {#for t in f.timeline}
+            <li><code>{t.t}</code> [{t.type}] {t.text}</li>
+          {/for}
+        </ul>
+      </details>
+    </article>
+  {/for}
+{#else}
+  <p>No hay hallazgos en la ventana seleccionada.</p>
+{/if}

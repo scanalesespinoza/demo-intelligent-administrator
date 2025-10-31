@@ -1,0 +1,11 @@
+{#if report?.findings?.isNotEmpty}
+  <ul>
+    {#for f in report.findings}
+      {#for t in f.timeline}
+        <li><strong>{f.service}</strong> — <code>{t.t}</code> [{t.type}] {t.text}</li>
+      {/for}
+    {/for}
+  </ul>
+{#else}
+  <p>No hay eventos en la ventana indicada.</p>
+{/if}

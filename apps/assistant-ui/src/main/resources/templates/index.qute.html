@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <title>iAdmin - Informe Inteligente</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    body { margin:2rem; background:#0e1117; color:#e5e7eb; }
+    section.report { background:#1b1e27; padding:1rem; border-radius:1rem; }
+    .finding { margin-bottom:1rem; border-left:4px solid #3b82f6; padding-left:1rem; }
+    .error { color:#ef4444; } .warn { color:#f59e0b; }
+    .ok { color:#10b981; } pre { background:#111318; padding:1rem; border-radius:.5rem; overflow-x:auto; }
+    .badge { background:#3b82f6; padding:0.3rem 0.5rem; border-radius:0.5rem; }
+  </style>
+</head>
+<body>
+  <h2>🤖 iAdmin — Análisis del Ambiente</h2>
+
+  <form action="/" method="get">
+    <label>Namespace:
+      <input type="text" name="ns" value="{namespace ?: 'demo-int-admin'}">
+    </label>
+    <label>Ventana (min):
+      <select name="minutes">
+        <option value="15">15 min</option>
+        <option value="30">30 min</option>
+        <option value="60">60 min</option>
+      </select>
+    </label>
+    <button type="submit">Analizar</button>
+  </form>
+
+  {#if report}
+  <section class="report">
+    <h3>📋 Resumen</h3>
+    <p>{report.summary}</p>
+
+    <h3>🧩 Hallazgos</h3>
+    {#for f in report.findings}
+      <article class="finding">
+        <h4>{f.service} — <span class="badge">{f.status}</span></h4>
+        <p><strong>Señales:</strong> {f.signals.join(', ')}</p>
+        <p><strong>Causa probable:</strong> {f.causeLikely} ({f.confidence*100}% confianza)</p>
+        <details>
+          <summary>Ver evidencia y detalles</summary>
+          <p><strong>Config Hints:</strong> {f.configHints}</p>
+          <ul>
+            {#for t in f.timeline}
+              <li><code>{t.t}</code> [{t.type}] {t.text}</li>
+            {/for}
+          </ul>
+        </details>
+      </article>
+    {/for}
+
+    <h3>💡 Recomendaciones</h3>
+    <ul>{#for r in report.recommendations}<li>{r}</li>{/for}</ul>
+  </section>
+  {/if}
+</body>
+</html>
