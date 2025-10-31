@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: random-failer-script
+  namespace: demo-int-admin
+data:
+  entrypoint.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    MODE="${FAIL_MODE:-mixed}"         # exit|loop|oom|image|probe|mixed
+    RATE="${FAIL_RATE:-0.3}"           # 0..1
+    SLEEP="${FAIL_SLEEP:-5}"
+    while true; do
+      r=$(awk -v seed=$RANDOM 'BEGIN{srand(seed); print rand()}')
+      if (( $(echo "$r < $RATE" | bc -l) )); then
+        case "$MODE" in
+          exit) echo "RANDOM_FAIL:exit"; exit 1;;
+          loop) echo "RANDOM_FAIL:loop"; sleep $SLEEP;;
+          oom)  echo "RANDOM_FAIL:oom"; python - <<'PY'
+            big=[]
+            while True: big.append('x'*10_000_000)
+    PY
+                ;;
+          probe) echo "RANDOM_FAIL:probe"; sleep 120;;
+          mixed)
+            case $((RANDOM%4)) in
+              0) echo "RANDOM_FAIL:exit"; exit 1;;
+              1) echo "RANDOM_FAIL:loop"; sleep $SLEEP;;
+              2) echo "RANDOM_FAIL:oom"; python - <<'PY'
+                big=[]
+                while True: big.append('x'*10_000_000)
+    PY
+                 ;;
+              3) echo "RANDOM_FAIL:probe"; sleep 120;;
+            esac
+            ;;
+          *) echo "RUNNING_OK"; sleep $SLEEP;;
+        esac
+      else
+        # patrones útiles para correlator futuro
+        echo "INFO processing..."; echo "WARN Liveness probe borderline"; echo "ERROR timeout connecting upstream"
+        sleep $SLEEP
+      fi
+    done

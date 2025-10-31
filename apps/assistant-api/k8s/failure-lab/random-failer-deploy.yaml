@@ -1,0 +1,155 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpha-failer
+  namespace: demo-int-admin
+  labels:
+    app: random-failer
+    tier: app
+    iadmin.test: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alpha-failer
+  template:
+    metadata:
+      labels:
+        app: alpha-failer
+        appGroup: random-failer
+        tier: app
+        iadmin.test: "true"
+    spec:
+      containers:
+        - name: worker
+          image: registry.redhat.io/openshift4/ose-tools-rhel
+          command: ["/bin/bash", "/opt/entrypoint.sh"]
+          env:
+            - name: FAIL_MODE
+              value: "mixed"
+            - name: FAIL_RATE
+              value: "0.4"
+            - name: FAIL_SLEEP
+              value: "5"
+          volumeMounts:
+            - name: script
+              mountPath: /opt/entrypoint.sh
+              subPath: entrypoint.sh
+          readinessProbe:
+            exec:
+              command: ["/bin/bash", "-c", "test -f /opt/entrypoint.sh"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 1
+      volumes:
+        - name: script
+          configMap:
+            name: random-failer-script
+            defaultMode: 0755
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beta-failer
+  namespace: demo-int-admin
+  labels:
+    app: random-failer
+    tier: app
+    iadmin.test: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: beta-failer
+  template:
+    metadata:
+      labels:
+        app: beta-failer
+        appGroup: random-failer
+        tier: app
+        iadmin.test: "true"
+    spec:
+      containers:
+        - name: worker
+          image: registry.redhat.io/openshift4/ose-tools-rhel
+          command: ["/bin/bash", "/opt/entrypoint.sh"]
+          env:
+            - name: FAIL_MODE
+              value: "exit"
+            - name: FAIL_RATE
+              value: "0.6"
+            - name: FAIL_SLEEP
+              value: "4"
+          volumeMounts:
+            - name: script
+              mountPath: /opt/entrypoint.sh
+              subPath: entrypoint.sh
+          livenessProbe:
+            exec:
+              command: ["/bin/bash", "-c", "ps aux | grep -v grep | grep entrypoint || exit 1"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: script
+          configMap:
+            name: random-failer-script
+            defaultMode: 0755
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gamma-failer
+  namespace: demo-int-admin
+  labels:
+    app: random-failer
+    tier: app
+    iadmin.test: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gamma-failer
+  template:
+    metadata:
+      labels:
+        app: gamma-failer
+        appGroup: random-failer
+        tier: app
+        iadmin.test: "true"
+    spec:
+      containers:
+        - name: worker
+          image: registry.redhat.io/openshift4/ose-tools-rhel
+          command: ["/bin/bash", "/opt/entrypoint.sh"]
+          env:
+            - name: FAIL_MODE
+              value: "probe"
+            - name: FAIL_RATE
+              value: "0.5"
+            - name: FAIL_SLEEP
+              value: "3"
+          volumeMounts:
+            - name: script
+              mountPath: /opt/entrypoint.sh
+              subPath: entrypoint.sh
+          readinessProbe:
+            exec:
+              command: ["/bin/bash", "-c", "date +%s >/dev/null"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["/bin/bash", "-c", "exit 1"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: script
+          configMap:
+            name: random-failer-script
+            defaultMode: 0755
