@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Script de instalación automatizada para iAdmin en Linux o WSL.
+
+Este script sigue los pasos descritos en la guía de instalación del README.
+Se enfoca en automatizar la preparación del entorno, la obtención del código,
+la compilación y la generación de artefactos para despliegue.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Iterable, List, Optional
+
+REPO_URL = "https://github.com/tu-organizacion/demo-intelligent-administrator.git"
+DEFAULT_BRANCH = "main"
+
+
+class InstallationError(RuntimeError):
+    """Error personalizado para fallos en el proceso de instalación."""
+
+
+def is_wsl() -> bool:
+    """Determina si el script se ejecuta dentro de WSL."""
+    if "WSL_DISTRO_NAME" in os.environ:
+        return True
+    try:
+        with open("/proc/version", "r", encoding="utf-8") as version_file:
+            return "microsoft" in version_file.read().lower()
+    except OSError:
+        return False
+
+
+def check_platform() -> None:
+    """Garantiza que el script se ejecute en Linux o WSL."""
+    system = platform.system().lower()
+    if system != "linux":
+        raise InstallationError(
+            "Este script está diseñado para ejecutarse en Linux o WSL. "
+            f"Sistema detectado: {platform.system()}"
+        )
+
+
+def ensure_command(command: str) -> bool:
+    """Verifica si un comando está disponible en la ruta."""
+    return shutil.which(command) is not None
+
+
+def run_command(command: List[str], cwd: Optional[Path] = None) -> None:
+    """Ejecuta un comando mostrando su salida en tiempo real."""
+    print(f"\n→ Ejecutando: {' '.join(command)}" + (f" (cwd={cwd})" if cwd else ""))
+    try:
+        subprocess.run(command, check=True, cwd=cwd)
+    except subprocess.CalledProcessError as exc:
+        raise InstallationError(
+            f"La ejecución del comando {' '.join(command)} falló con código {exc.returncode}."
+        ) from exc
+
+
+def clone_repository(destination: Path, branch: str, force: bool) -> Path:
+    """Clona el repositorio en la ruta indicada si aún no existe."""
+    if destination.exists():
+        if (destination / ".git").exists() and not force:
+            print(f"Repositorio existente detectado en {destination}. Se reutiliza.")
+            return destination
+        if not force:
+            raise InstallationError(
+                f"El directorio {destination} ya existe. Usa --force-clone para reemplazarlo."
+            )
+        print(f"Eliminando el directorio {destination} por solicitud de --force-clone.")
+        shutil.rmtree(destination)
+
+    run_command(["git", "clone", "--branch", branch, REPO_URL, str(destination)])
+    return destination
+
+
+def check_prerequisites(require_docker: bool) -> None:
+    """Valida que las dependencias básicas estén instaladas."""
+    missing: list[str] = []
+    for command in ("git", "java", "mvn"):
+        if not ensure_command(command):
+            missing.append(command)
+    if require_docker and not ensure_command("docker"):
+        missing.append("docker")
+
+    if missing:
+        raise InstallationError(
+            "Faltan dependencias requeridas: " + ", ".join(missing) +
+            ". Instálalas manualmente e intenta de nuevo."
+        )
+
+    java_home = os.environ.get("JAVA_HOME")
+    if not java_home:
+        print(
+            "⚠️  Advertencia: la variable JAVA_HOME no está definida. "
+            "Quarkus requiere JDK 21 o superior."
+        )
+
+
+def ensure_repo_path(path: Path) -> Path:
+    """Devuelve la ruta del repositorio y valida su contenido."""
+    if not path.exists():
+        raise InstallationError(f"La ruta {path} no existe.")
+    if not (path / "pom.xml").exists():
+        raise InstallationError(
+            f"La ruta {path} no parece contener el repositorio de iAdmin (pom.xml faltante)."
+        )
+    return path.resolve()
+
+
+def run_maven_in_modules(
+    repo_path: Path, goals: Iterable[str], extra_args: Optional[Iterable[str]] = None
+) -> None:
+    """Ejecuta Maven en los módulos assistant-api y assistant-ui."""
+    modules = [repo_path / "apps" / "assistant-api", repo_path / "apps" / "assistant-ui"]
+    mvn_executable = "./mvnw" if (repo_path / "mvnw").exists() else "mvn"
+    args = list(goals)
+    if extra_args:
+        args.extend(extra_args)
+
+    for module in modules:
+        run_command([mvn_executable, *args], cwd=module)
+
+
+def build_containers(repo_path: Path) -> None:
+    """Construye las imágenes de contenedor para ambos módulos."""
+    dockerfile_mapping = {
+        "assistant-api": "Dockerfile.jvm",
+        "assistant-ui": "Dockerfile.jvm",
+    }
+    for module, dockerfile in dockerfile_mapping.items():
+        module_path = repo_path / "apps" / module
+        image_tag = f"iadmin/{module}:latest"
+        run_command(
+            [
+                "docker",
+                "build",
+                "-f",
+                f"src/main/docker/{dockerfile}",
+                "-t",
+                image_tag,
+                ".",
+            ],
+            cwd=module_path,
+        )
+
+
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Instalador automatizado de iAdmin")
+    parser.add_argument(
+        "--clone",
+        action="store_true",
+        help="Clona el repositorio antes de ejecutar el resto de pasos.",
+    )
+    parser.add_argument(
+        "--branch",
+        default=DEFAULT_BRANCH,
+        help="Rama a clonar cuando se usa --clone (por defecto: main).",
+    )
+    parser.add_argument(
+        "--destination",
+        type=Path,
+        default=Path.cwd(),
+        help="Directorio donde se clonará o buscará el repositorio.",
+    )
+    parser.add_argument(
+        "--force-clone",
+        action="store_true",
+        help="Reemplaza el directorio de destino si ya existe al clonar.",
+    )
+    parser.add_argument(
+        "--skip-containers",
+        action="store_true",
+        help="Omite la construcción de imágenes de contenedor.",
+    )
+    parser.add_argument(
+        "--build-native",
+        action="store_true",
+        help="Genera binarios nativos además de los empaquetados JVM.",
+    )
+    parser.add_argument(
+        "--uber-jar",
+        action="store_true",
+        help="Genera también artefactos tipo uber-jar en cada módulo.",
+    )
+    parser.add_argument(
+        "--only-verify",
+        action="store_true",
+        help="Ejecuta únicamente la compilación/verificación sin empaquetar.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    try:
+        args = parse_args(argv)
+        check_platform()
+        check_prerequisites(require_docker=not args.skip_containers)
+
+        repo_path = args.destination
+        if args.clone:
+            repo_path = clone_repository(args.destination, args.branch, args.force_clone)
+
+        repo_path = ensure_repo_path(repo_path)
+        print(f"Repositorio localizado en {repo_path}")
+
+        mvn_executable = "./mvnw" if (repo_path / "mvnw").exists() else "mvn"
+
+        # Paso 4 de la guía: compilación y verificación.
+        run_command([mvn_executable, "clean", "install"], cwd=repo_path)
+
+        if args.only_verify:
+            print("Se solicitó únicamente verificación. Instalación finalizada.")
+            return 0
+
+        # Paso 6 de la guía: empaquetado para despliegue.
+        run_maven_in_modules(repo_path, ["package"])
+
+        if args.uber_jar:
+            run_maven_in_modules(
+                repo_path,
+                ["package"],
+                ["-Dquarkus.package.jar.type=uber-jar"],
+            )
+
+        if args.build_native:
+            run_maven_in_modules(repo_path, ["package"], ["-Dnative"])
+
+        # Paso 7: construcción de imágenes de contenedor.
+        if not args.skip_containers:
+            build_containers(repo_path)
+        else:
+            print("Se omitió la construcción de contenedores por configuración.")
+
+        # Paso 8: verificación de salud (recomendaciones finales).
+        print(
+            "\n✔ Instalación completada. Inicia los servicios en modo desarrollo con:\n"
+            "  cd apps/assistant-api && ./mvnw quarkus:dev\n"
+            "  cd apps/assistant-ui && ./mvnw quarkus:dev\n"
+            "Luego visita http://localhost:8080/q/health y http://localhost:8081 para verificar."
+        )
+        if is_wsl():
+            print("Detectado WSL: recuerda exponer los puertos desde WSL si accedes desde Windows.")
+        return 0
+    except InstallationError as error:
+        print(f"\n✖ Error durante la instalación: {error}")
+        return 1
+    except KeyboardInterrupt:
+        print("\nInstalación interrumpida por el usuario.")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
