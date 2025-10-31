@@ -33,6 +33,9 @@ public class DefaultConfigConnector implements ConfigConnector {
         if (namespace == null || namespace.isBlank()) {
             return new ConfigSnapshot(Map.of(), List.of(), Map.of());
         }
+        if (deploymentName == null || deploymentName.isBlank()) {
+            return new ConfigSnapshot(Map.of(), List.of(), Map.of());
+        }
         Deployment deployment = client.apps().deployments().inNamespace(namespace).withName(deploymentName).get();
         if (deployment == null) {
             return new ConfigSnapshot(Map.of(), List.of(), Map.of());

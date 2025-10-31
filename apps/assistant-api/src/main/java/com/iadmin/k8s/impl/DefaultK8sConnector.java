@@ -127,6 +127,9 @@ public class DefaultK8sConnector implements K8sConnector {
         if (namespace == null || namespace.isBlank()) {
             return List.of();
         }
+        if (pod == null || pod.isBlank()) {
+            return List.of();
+        }
         var podResource = client.pods().inNamespace(namespace).withName(pod);
         if (podResource == null) {
             return List.of();
