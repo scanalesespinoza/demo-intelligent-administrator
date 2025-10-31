@@ -78,14 +78,24 @@ def clone_repository(destination: Path, branch: str, force: bool) -> Path:
     return destination
 
 
-def check_prerequisites(require_docker: bool) -> None:
+def check_prerequisites(require_docker: bool, wrapper_available: bool = False) -> None:
     """Valida que las dependencias básicas estén instaladas."""
     missing: list[str] = []
-    for command in ("git", "java", "mvn"):
+    for command in ("git", "java"):
         if not ensure_command(command):
             missing.append(command)
     if require_docker and not ensure_command("docker"):
         missing.append("docker")
+
+    has_maven = ensure_command("mvn")
+    if not has_maven:
+        if wrapper_available:
+            print(
+                "ℹ️  Maven no está instalado globalmente. Se utilizará el Maven Wrapper (./mvnw)"
+                " incluido en el repositorio."
+            )
+        else:
+            missing.append("mvn (o el Maven Wrapper ./mvnw)")
 
     if missing:
         raise InstallationError(
@@ -199,7 +209,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         args = parse_args(argv)
         check_platform()
-        check_prerequisites(require_docker=not args.skip_containers)
+        wrapper_available = args.clone or (args.destination / "mvnw").exists()
+        check_prerequisites(
+            require_docker=not args.skip_containers,
+            wrapper_available=wrapper_available,
+        )
 
         repo_path = args.destination
         if args.clone:
