@@ -12,6 +12,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
@@ -52,7 +53,13 @@ public class ChatResource {
         Report report = correlator.analyze(ns, from, to, topN);
         String narrative = llm.redactReport(report);
 
-        audit.recordInteraction(safeReq.message(), ns, from, to, report, narrative);
+        audit.add(Map.of(
+                "ts", Instant.now().toString(),
+                "ns", ns,
+                "from", from,
+                "to", to,
+                "findings", report.findings().size(),
+                "causes", report.findings().stream().map(Report.Finding::causeLikely).distinct().toList()));
 
         return new ChatResponse(report, narrative);
     }
