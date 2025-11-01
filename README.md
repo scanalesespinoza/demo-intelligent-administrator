@@ -28,6 +28,7 @@ iAdmin está compuesto por dos aplicaciones Quarkus: `assistant-api` (backend) y
 - **Variables sensibles y externas**:
   - `OIDC_ISSUER` y `OIDC_SECRET`: habilita autenticación OIDC descomentando las líneas correspondientes en `apps/assistant-api/src/main/resources/application.properties` y exportando estas variables antes de iniciar la aplicación.
   - `LLM_ENDPOINT`: establece la URL del modelo de lenguaje que utilizará el backend. Por defecto apunta a `http://localhost/mock-llm`.
+  - `LLM_API_KEY`: define la clave utilizada para autenticar las llamadas contra el proveedor del modelo de lenguaje. Si se omite, las peticiones se enviarán sin cabecera `Authorization`.
 - **Punto de enlace del API**:
   - En `apps/assistant-ui/src/main/resources/application.properties`, la propiedad `assistant.api.url` apunta al servicio desplegado en Kubernetes. Para ejecución local, sobreescribe este valor con la URL local del backend (por ejemplo, `http://localhost:8080`).
   - Puedes sobreescribir cualquier propiedad de Quarkus mediante variables de entorno en mayúsculas (por ejemplo, `ASSISTANT_API_URL`).
