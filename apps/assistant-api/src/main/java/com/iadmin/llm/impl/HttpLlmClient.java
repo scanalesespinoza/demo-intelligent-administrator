@@ -26,11 +26,13 @@ public class HttpLlmClient implements LlmClient {
             - Si algo falta, dilo explícitamente (“no se encontró evidencia de …”).
             """;
 
+    private static final String DEFAULT_MODEL = "granite-7b-instruct";
+
     @ConfigProperty(name = "llm.endpoint")
     String endpoint;
 
-    @ConfigProperty(name = "llm.model", defaultValue = "granite-7b-instruct")
-    String model;
+    @ConfigProperty(name = "llm.model")
+    Optional<String> model = Optional.empty();
 
     @ConfigProperty(name = "llm.api-key")
     Optional<String> apiKey = Optional.empty();
@@ -56,7 +58,7 @@ public class HttpLlmClient implements LlmClient {
                     "content", SYSTEM_PROMPT
             );
             var body = Map.of(
-                    "model", model,
+                    "model", resolveModel(),
                     "messages", List.of(sys, user),
                     "temperature", 0.2,
                     "max_tokens", 800
@@ -112,6 +114,13 @@ public class HttpLlmClient implements LlmClient {
         } catch (Exception e) {
             return "No se pudo interpretar la respuesta del LLM (fallback). raw=" + truncate(raw);
         }
+    }
+
+    private String resolveModel() {
+        return model
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .orElse(DEFAULT_MODEL);
     }
 
     private String truncate(String value) {
