@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Script de instalación automatizada para iAdmin en Linux o WSL.
+"""Script de instalación automatizada para iAdmin en Linux, WSL o Windows.
 
 Este script sigue los pasos descritos en la guía de instalación del README.
 Se enfoca en automatizar la preparación del entorno, la obtención del código,
@@ -35,12 +35,17 @@ def is_wsl() -> bool:
         return False
 
 
+def is_windows() -> bool:
+    """Indica si el sistema operativo detectado es Windows."""
+    return platform.system().lower() == "windows"
+
+
 def check_platform() -> None:
-    """Garantiza que el script se ejecute en Linux o WSL."""
+    """Garantiza que el script se ejecute en Linux, WSL o Windows."""
     system = platform.system().lower()
-    if system != "linux":
+    if system not in {"linux", "windows"}:
         raise InstallationError(
-            "Este script está diseñado para ejecutarse en Linux o WSL. "
+            "Este script está diseñado para ejecutarse en Linux, WSL o Windows. "
             f"Sistema detectado: {platform.system()}"
         )
 
@@ -93,6 +98,11 @@ def detect_container_runtime() -> Optional[str]:
     return None
 
 
+def has_maven_wrapper(path: Path) -> bool:
+    """Comprueba si en la ruta indicada existe el Maven Wrapper."""
+    return any((path / candidate).exists() for candidate in ("mvnw", "mvnw.cmd"))
+
+
 def check_prerequisites(
     require_docker: bool, wrapper_available: bool = False
 ) -> Optional[str]:
@@ -111,11 +121,11 @@ def check_prerequisites(
     if not has_maven:
         if wrapper_available:
             print(
-                "ℹ️  Maven no está instalado globalmente. Se utilizará el Maven Wrapper (./mvnw)"
-                " incluido en el repositorio."
+                "ℹ️  Maven no está instalado globalmente. Se utilizará el Maven Wrapper (./mvnw"
+                " o mvnw.cmd) incluido en el repositorio."
             )
         else:
-            missing.append("mvn (o el Maven Wrapper ./mvnw)")
+            missing.append("mvn (o el Maven Wrapper ./mvnw / mvnw.cmd)")
 
     if missing:
         raise InstallationError(
@@ -144,18 +154,37 @@ def ensure_repo_path(path: Path) -> Path:
     return path.resolve()
 
 
+def get_maven_command(repo_path: Path) -> List[str]:
+    """Devuelve el comando apropiado para ejecutar Maven o el Maven Wrapper."""
+    wrapper_unix = repo_path / "mvnw"
+    wrapper_windows = repo_path / "mvnw.cmd"
+
+    if is_windows():
+        if wrapper_windows.exists():
+            return ["cmd", "/c", str(wrapper_windows)]
+        return ["mvn"]
+
+    if wrapper_unix.exists():
+        return [str(wrapper_unix)]
+
+    return ["mvn"]
+
+
 def run_maven_in_modules(
-    repo_path: Path, goals: Iterable[str], extra_args: Optional[Iterable[str]] = None
+    repo_path: Path,
+    goals: Iterable[str],
+    extra_args: Optional[Iterable[str]] = None,
+    maven_command: Optional[List[str]] = None,
 ) -> None:
     """Ejecuta Maven en los módulos assistant-api y assistant-ui."""
     modules = [repo_path / "apps" / "assistant-api", repo_path / "apps" / "assistant-ui"]
-    mvn_executable = "./mvnw" if (repo_path / "mvnw").exists() else "mvn"
+    command_prefix = maven_command or get_maven_command(repo_path)
     args = list(goals)
     if extra_args:
         args.extend(extra_args)
 
     for module in modules:
-        run_command([mvn_executable, *args], cwd=module)
+        run_command([*command_prefix, *args], cwd=module)
 
 
 def build_containers(repo_path: Path, container_runtime: str) -> None:
@@ -247,7 +276,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         args = parse_args(argv)
         check_platform()
-        wrapper_available = args.clone or (args.destination / "mvnw").exists()
+        wrapper_available = args.clone or has_maven_wrapper(args.destination)
         container_runtime = check_prerequisites(
             require_docker=not args.skip_containers,
             wrapper_available=wrapper_available,
@@ -260,27 +289,33 @@ def main(argv: Optional[List[str]] = None) -> int:
         repo_path = ensure_repo_path(repo_path)
         print(f"Repositorio localizado en {repo_path}")
 
-        mvn_executable = "./mvnw" if (repo_path / "mvnw").exists() else "mvn"
+        maven_command = get_maven_command(repo_path)
 
         # Paso 4 de la guía: compilación y verificación.
-        run_command([mvn_executable, "clean", "install"], cwd=repo_path)
+        run_command([*maven_command, "clean", "install"], cwd=repo_path)
 
         if args.only_verify:
             print("Se solicitó únicamente verificación. Instalación finalizada.")
             return 0
 
         # Paso 6 de la guía: empaquetado para despliegue.
-        run_maven_in_modules(repo_path, ["package"])
+        run_maven_in_modules(repo_path, ["package"], maven_command=maven_command)
 
         if args.uber_jar:
             run_maven_in_modules(
                 repo_path,
                 ["package"],
                 ["-Dquarkus.package.jar.type=uber-jar"],
+                maven_command=maven_command,
             )
 
         if args.build_native:
-            run_maven_in_modules(repo_path, ["package"], ["-Dnative"])
+            run_maven_in_modules(
+                repo_path,
+                ["package"],
+                ["-Dnative"],
+                maven_command=maven_command,
+            )
 
         # Paso 7: construcción de imágenes de contenedor.
         if not args.skip_containers:
