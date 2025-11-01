@@ -67,6 +67,12 @@ def run_command(
         env.update(extra_env)
     try:
         subprocess.run(command, check=True, cwd=cwd, env=env)
+    except FileNotFoundError as exc:
+        raise InstallationError(
+            "No se pudo ejecutar el comando requerido. "
+            "Verifica que esté instalado y disponible en el PATH: "
+            f"{command[0]}"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         raise InstallationError(
             f"La ejecución del comando {' '.join(command)} falló con código {exc.returncode}."
