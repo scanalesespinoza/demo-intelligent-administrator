@@ -12,6 +12,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 @ApplicationScoped
@@ -30,6 +31,9 @@ public class HttpLlmClient implements LlmClient {
 
     @ConfigProperty(name = "llm.model", defaultValue = "granite-7b-instruct")
     String model;
+
+    @ConfigProperty(name = "llm.api-key")
+    Optional<String> apiKey = Optional.empty();
 
     @Inject
     ObjectMapper mapper;
@@ -58,10 +62,15 @@ public class HttpLlmClient implements LlmClient {
                     "max_tokens", 800
             );
 
-            var request = HttpRequest.newBuilder(URI.create(endpoint))
+            var builder = HttpRequest.newBuilder(URI.create(endpoint))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
-                    .build();
+                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)));
+
+            apiKey.map(String::trim)
+                    .filter(value -> !value.isEmpty())
+                    .ifPresent(value -> builder.header("Authorization", "Bearer " + value));
+
+            var request = builder.build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 400) {

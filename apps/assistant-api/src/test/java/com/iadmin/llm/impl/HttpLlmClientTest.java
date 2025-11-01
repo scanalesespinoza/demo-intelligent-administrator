@@ -36,14 +36,14 @@ class HttpLlmClientTest {
         client.mapper = new ObjectMapper().registerModule(new JavaTimeModule());
         client.model = "test-model";
         client.endpoint = "http://localhost/test";
+        client.apiKey = Optional.empty();
     }
 
     @Test
     void extractContentFromOpenAIResponse() {
-        client.setHttpClient(new StubHttpClient("{" +
-                "\"choices\":[{" +
-                "\"message\":{\"content\":\"Hola" +
-                " mundo\"}}]}"));
+        var payload = "{\"choices\":[{\"message\":{\"content\":\"Hola mundo\"}}]}";
+        var stub = new StubHttpClient(payload);
+        client.setHttpClient(stub);
 
         Report report = new Report(
                 new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
@@ -55,9 +55,28 @@ class HttpLlmClientTest {
         assertEquals("Hola mundo", narrative);
     }
 
+    @Test
+    void includeAuthorizationHeaderWhenApiKeyPresent() {
+        var payload = "{\"choices\":[{\"message\":{\"content\":\"Hola mundo\"}}]}";
+        var stub = new StubHttpClient(payload);
+        client.setHttpClient(stub);
+        client.apiKey = Optional.of("test-key");
+
+        Report report = new Report(
+                new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
+                List.of(),
+                "",
+                List.of());
+
+        client.redactReport(report);
+
+        assertEquals("Bearer test-key", stub.lastRequest.headers().firstValue("Authorization").orElse(null));
+    }
+
     static class StubHttpClient extends HttpClient {
 
         private final String payload;
+        HttpRequest lastRequest;
 
         StubHttpClient(String payload) {
             this.payload = payload;
@@ -110,6 +129,7 @@ class HttpLlmClientTest {
 
         @Override
         public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) {
+            lastRequest = request;
             return new SimpleResponse<>(request, (T) payload);
         }
 
