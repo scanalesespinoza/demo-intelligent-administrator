@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 REPO_URL = "https://github.com/tu-organizacion/demo-intelligent-administrator.git"
 DEFAULT_BRANCH = "main"
@@ -106,7 +106,10 @@ def detect_container_runtime() -> Optional[str]:
 
 def has_maven_wrapper(path: Path) -> bool:
     """Comprueba si en la ruta indicada existe el Maven Wrapper."""
-    return any((path / candidate).exists() for candidate in ("mvnw", "mvnw.cmd"))
+    for pattern in ("mvnw", "mvnw.cmd"):
+        if any(path.glob(f"**/{pattern}")):
+            return True
+    return False
 
 
 def check_prerequisites(
@@ -160,37 +163,54 @@ def ensure_repo_path(path: Path) -> Path:
     return path.resolve()
 
 
-def get_maven_command(repo_path: Path) -> List[str]:
+def _sorted_existing(paths: Iterable[Path]) -> Iterable[Path]:
+    """Devuelve las rutas existentes ordenadas lexicográficamente."""
+    return (path for path in sorted(paths) if path.exists())
+
+
+def get_maven_command(path: Path, search_root: Optional[Path] = None) -> Tuple[List[str], Optional[Path]]:
     """Devuelve el comando apropiado para ejecutar Maven o el Maven Wrapper."""
-    wrapper_unix = repo_path / "mvnw"
-    wrapper_windows = repo_path / "mvnw.cmd"
 
-    if is_windows():
-        if wrapper_windows.exists():
-            return ["cmd", "/c", str(wrapper_windows)]
-        return ["mvn"]
+    root = search_root or path
+    windows = is_windows()
+    wrapper_names = ("mvnw.cmd",) if windows else ("mvnw",)
 
-    if wrapper_unix.exists():
-        return [str(wrapper_unix)]
+    for name in wrapper_names:
+        direct = path / name
+        if direct.exists():
+            command = ["cmd", "/c", str(direct)] if windows else [str(direct)]
+            return command, direct.parent
 
-    return ["mvn"]
+    if search_root and search_root != path:
+        for name in wrapper_names:
+            candidate = search_root / name
+            if candidate.exists():
+                command = ["cmd", "/c", str(candidate)] if windows else [str(candidate)]
+                return command, candidate.parent
+
+    glob_pattern = "**/" + wrapper_names[0]
+    for match in _sorted_existing(root.glob(glob_pattern)):
+        command = ["cmd", "/c", str(match)] if windows else [str(match)]
+        return command, match.parent
+
+    if windows:
+        return ["cmd", "/c", "mvn"], None
+
+    return ["mvn"], None
 
 
 def run_maven_in_modules(
     repo_path: Path,
     goals: Iterable[str],
     extra_args: Optional[Iterable[str]] = None,
-    maven_command: Optional[List[str]] = None,
 ) -> None:
     """Ejecuta Maven en los módulos assistant-api y assistant-ui."""
     modules = [repo_path / "apps" / "assistant-api", repo_path / "apps" / "assistant-ui"]
-    command_prefix = maven_command or get_maven_command(repo_path)
-    args = list(goals)
-    if extra_args:
-        args.extend(extra_args)
-
+    base_goals = list(goals)
+    optional_args = list(extra_args) if extra_args else []
     for module in modules:
-        run_command([*command_prefix, *args], cwd=module)
+        command_prefix, _ = get_maven_command(module, search_root=repo_path)
+        run_command([*command_prefix, *base_goals, *optional_args], cwd=module)
 
 
 def build_containers(repo_path: Path, container_runtime: str) -> None:
@@ -295,24 +315,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         repo_path = ensure_repo_path(repo_path)
         print(f"Repositorio localizado en {repo_path}")
 
-        maven_command = get_maven_command(repo_path)
+        maven_command, wrapper_location = get_maven_command(repo_path)
+        additional_args: List[str] = []
+        if wrapper_location and wrapper_location != repo_path:
+            additional_args.extend(["-f", str(repo_path / "pom.xml")])
 
         # Paso 4 de la guía: compilación y verificación.
-        run_command([*maven_command, "clean", "install"], cwd=repo_path)
+        run_command([*maven_command, *additional_args, "clean", "install"], cwd=repo_path)
 
         if args.only_verify:
             print("Se solicitó únicamente verificación. Instalación finalizada.")
             return 0
 
         # Paso 6 de la guía: empaquetado para despliegue.
-        run_maven_in_modules(repo_path, ["package"], maven_command=maven_command)
+        run_maven_in_modules(repo_path, ["package"])
 
         if args.uber_jar:
             run_maven_in_modules(
                 repo_path,
                 ["package"],
                 ["-Dquarkus.package.jar.type=uber-jar"],
-                maven_command=maven_command,
             )
 
         if args.build_native:
@@ -320,7 +342,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                 repo_path,
                 ["package"],
                 ["-Dnative"],
-                maven_command=maven_command,
             )
 
         # Paso 7: construcción de imágenes de contenedor.
