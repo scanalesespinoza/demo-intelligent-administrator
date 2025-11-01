@@ -1,0 +1,43 @@
+# Build artifacts
+**/target/
+**/build/
+**/dist/
+**/out/
+*.class
+*.jar
+*.war
+*.ear
+
+# Dependency directories
+node_modules/
+
+# IDE and editor settings
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Environment and local configuration
+.env
+.env.*
+*.local
+*.secret
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Tooling caches
+.mvn/
+.gradle/
+
