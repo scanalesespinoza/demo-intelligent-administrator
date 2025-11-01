@@ -173,16 +173,25 @@ def build_containers(repo_path: Path, container_runtime: str) -> None:
     for module, dockerfile in dockerfile_mapping.items():
         module_path = repo_path / "apps" / module
         image_tag = f"iadmin/{module}:latest"
-        run_command(
+        command = [container_runtime]
+        if podman_on_wsl:
+            # En algunos entornos WSL, Podman intenta notificar eventos vía journald,
+            # lo que genera errores por la ausencia de systemd. Forzamos el backend
+            # de eventos a "file" mediante la opción de la CLI además de la variable
+            # de entorno para cubrir todas las versiones de Podman.
+            command.append("--events-backend=file")
+        command.extend(
             [
-                container_runtime,
                 "build",
                 "-f",
                 f"src/main/docker/{dockerfile}",
                 "-t",
                 image_tag,
                 ".",
-            ],
+            ]
+        )
+        run_command(
+            command,
             cwd=module_path,
             extra_env={"CONTAINERS_EVENTS_BACKEND": "file"} if podman_on_wsl else None,
         )
