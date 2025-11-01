@@ -34,7 +34,7 @@ class HttpLlmClientTest {
     void setUp() {
         client = new HttpLlmClient();
         client.mapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        client.model = "test-model";
+        client.model = Optional.of("test-model");
         client.endpoint = "http://localhost/test";
         client.apiKey = Optional.empty();
     }
