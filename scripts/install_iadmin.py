@@ -50,11 +50,18 @@ def ensure_command(command: str) -> bool:
     return shutil.which(command) is not None
 
 
-def run_command(command: List[str], cwd: Optional[Path] = None) -> None:
+def run_command(
+    command: List[str],
+    cwd: Optional[Path] = None,
+    extra_env: Optional[dict[str, str]] = None,
+) -> None:
     """Ejecuta un comando mostrando su salida en tiempo real."""
     print(f"\n→ Ejecutando: {' '.join(command)}" + (f" (cwd={cwd})" if cwd else ""))
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
     try:
-        subprocess.run(command, check=True, cwd=cwd)
+        subprocess.run(command, check=True, cwd=cwd, env=env)
     except subprocess.CalledProcessError as exc:
         raise InstallationError(
             f"La ejecución del comando {' '.join(command)} falló con código {exc.returncode}."
@@ -157,6 +164,12 @@ def build_containers(repo_path: Path, container_runtime: str) -> None:
         "assistant-api": "Dockerfile.jvm",
         "assistant-ui": "Dockerfile.jvm",
     }
+    podman_on_wsl = container_runtime == "podman" and is_wsl()
+    if podman_on_wsl:
+        print(
+            "Se detectó Podman ejecutándose en WSL. Se usará CONTAINERS_EVENTS_BACKEND=file "
+            "para evitar advertencias de journald durante la construcción."
+        )
     for module, dockerfile in dockerfile_mapping.items():
         module_path = repo_path / "apps" / module
         image_tag = f"iadmin/{module}:latest"
@@ -171,6 +184,7 @@ def build_containers(repo_path: Path, container_runtime: str) -> None:
                 ".",
             ],
             cwd=module_path,
+            extra_env={"CONTAINERS_EVENTS_BACKEND": "file"} if podman_on_wsl else None,
         )
 
 
