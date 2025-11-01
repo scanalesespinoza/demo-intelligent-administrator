@@ -78,14 +78,27 @@ def clone_repository(destination: Path, branch: str, force: bool) -> Path:
     return destination
 
 
-def check_prerequisites(require_docker: bool, wrapper_available: bool = False) -> None:
+def detect_container_runtime() -> Optional[str]:
+    """Devuelve el runtime de contenedores disponible (docker o podman)."""
+    for candidate in ("docker", "podman"):
+        if ensure_command(candidate):
+            return candidate
+    return None
+
+
+def check_prerequisites(
+    require_docker: bool, wrapper_available: bool = False
+) -> Optional[str]:
     """Valida que las dependencias básicas estén instaladas."""
     missing: list[str] = []
     for command in ("git", "java"):
         if not ensure_command(command):
             missing.append(command)
-    if require_docker and not ensure_command("docker"):
-        missing.append("docker")
+    container_runtime: Optional[str] = None
+    if require_docker:
+        container_runtime = detect_container_runtime()
+        if container_runtime is None:
+            missing.append("docker o podman")
 
     has_maven = ensure_command("mvn")
     if not has_maven:
@@ -109,6 +122,8 @@ def check_prerequisites(require_docker: bool, wrapper_available: bool = False) -
             "⚠️  Advertencia: la variable JAVA_HOME no está definida. "
             "Quarkus requiere JDK 21 o superior."
         )
+
+    return container_runtime
 
 
 def ensure_repo_path(path: Path) -> Path:
@@ -136,7 +151,7 @@ def run_maven_in_modules(
         run_command([mvn_executable, *args], cwd=module)
 
 
-def build_containers(repo_path: Path) -> None:
+def build_containers(repo_path: Path, container_runtime: str) -> None:
     """Construye las imágenes de contenedor para ambos módulos."""
     dockerfile_mapping = {
         "assistant-api": "Dockerfile.jvm",
@@ -147,7 +162,7 @@ def build_containers(repo_path: Path) -> None:
         image_tag = f"iadmin/{module}:latest"
         run_command(
             [
-                "docker",
+                container_runtime,
                 "build",
                 "-f",
                 f"src/main/docker/{dockerfile}",
@@ -210,7 +225,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         args = parse_args(argv)
         check_platform()
         wrapper_available = args.clone or (args.destination / "mvnw").exists()
-        check_prerequisites(
+        container_runtime = check_prerequisites(
             require_docker=not args.skip_containers,
             wrapper_available=wrapper_available,
         )
@@ -246,7 +261,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         # Paso 7: construcción de imágenes de contenedor.
         if not args.skip_containers:
-            build_containers(repo_path)
+            if container_runtime is None:
+                raise InstallationError(
+                    "No se encontró un runtime de contenedores (docker o podman)."
+                )
+            build_containers(repo_path, container_runtime)
         else:
             print("Se omitió la construcción de contenedores por configuración.")
 
