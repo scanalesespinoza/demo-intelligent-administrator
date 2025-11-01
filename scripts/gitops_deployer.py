@@ -173,13 +173,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     for name, help_text in help_map.items():
         subparsers.add_parser(name, help=help_text)
 
-    parser.add_argument(
-        "kubectl_options",
-        nargs=argparse.REMAINDER,
-        help="Additional options forwarded to the underlying kubectl/oc command.",
-    )
+    args, kubectl_options = parser.parse_known_args(argv)
+    setattr(args, "kubectl_options", kubectl_options)
 
-    return parser.parse_args(argv)
+    return args
 
 
 def main(argv: Sequence[str]) -> int:
