@@ -34,7 +34,7 @@ spec:
       serviceAccountName: assistant-ui
       containers:
         - name: app
-          image: quay.io/iadmin/assistant-ui:0.0.1
+          image: quay.io/sergio_canales_e/iadmin/assistant-ui:0.0.1
           ports:
             - containerPort: 8081
           envFrom:
