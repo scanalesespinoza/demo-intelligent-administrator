@@ -7,6 +7,10 @@ name: CI — Build & Test (assistant-api / assistant-ui)
     branches: ["main", "develop", "feature/**"]
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+  pull-requests: read
+
 env:
   MAVEN_OPTS: -Xmx2g
   JAVA_VERSION: '21'
@@ -36,20 +40,14 @@ jobs:
             assistant_ui:
               - 'apps/assistant-ui/**'
 
-  build-and-test:
-    name: Build & Test (${{ matrix.module }})
+  build-and-test-api:
+    name: Build & Test (apps/assistant-api)
     runs-on: ubuntu-latest
     needs: detect-changes
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - apps/assistant-api
-          - apps/assistant-ui
-    if: ${{ (matrix.module == 'apps/assistant-api' && needs.detect-changes.outputs.assistant_api == 'true') || (matrix.module == 'apps/assistant-ui' && needs.detect-changes.outputs.assistant_ui == 'true') }}
+    if: ${{ needs.detect-changes.outputs.assistant_api == 'true' }}
     defaults:
       run:
-        working-directory: ${{ matrix.module }}
+        working-directory: apps/assistant-api
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,7 +66,39 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ format('surefire-reports-{0}', replace(matrix.module, '/', '-')) }}
+          name: surefire-reports-apps-assistant-api
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+          if-no-files-found: ignore
+
+  build-and-test-ui:
+    name: Build & Test (apps/assistant-ui)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.assistant_ui == 'true' }}
+    defaults:
+      run:
+        working-directory: apps/assistant-ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Maven Verify (compile + unit tests)
+        run: mvn -B -U -DskipTests=false -Dquarkus.test.profile=ci verify
+
+      - name: Upload surefire/failsafe reports (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-apps-assistant-ui
           path: |
             **/target/surefire-reports/**
             **/target/failsafe-reports/**
@@ -79,7 +109,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - detect-changes
-      - build-and-test
+      - build-and-test-api
+      - build-and-test-ui
     if: ${{ needs.detect-changes.outputs.assistant_api == 'true' || needs.detect-changes.outputs.assistant_ui == 'true' }}
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - detect-changes
-      - build-and-test
+      - build-and-test-api
       - aggregate
     if: ${{ needs.detect-changes.outputs.assistant_api == 'true' }}
     steps:
@@ -140,7 +171,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - detect-changes
-      - build-and-test
+      - build-and-test-ui
       - aggregate
     if: ${{ needs.detect-changes.outputs.assistant_ui == 'true' }}
     steps:
