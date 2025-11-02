@@ -3,9 +3,11 @@ package com.iadmin.llm.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iadmin.llm.LlmClient;
+import com.iadmin.llm.LlmException;
 import com.iadmin.report.Report;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -44,10 +46,18 @@ public class HttpLlmClient implements LlmClient {
 
     @Override
     public String redactReport(Report report) {
+        if (endpoint == null || endpoint.isBlank()) {
+            throw new LlmException("llm.endpoint no configurado");
+        }
+
+        URI target;
         try {
-            if (endpoint == null || endpoint.isBlank()) {
-                throw new IllegalStateException("llm.endpoint no configurado");
-            }
+            target = URI.create(endpoint.trim());
+        } catch (IllegalArgumentException e) {
+            throw new LlmException("llm.endpoint inválido: " + endpoint, e);
+        }
+
+        try {
             var prettyReport = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report);
             var user = Map.of(
                     "role", "user",
@@ -64,7 +74,7 @@ public class HttpLlmClient implements LlmClient {
                     "max_tokens", 800
             );
 
-            var builder = HttpRequest.newBuilder(URI.create(endpoint))
+            var builder = HttpRequest.newBuilder(target)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)));
 
@@ -76,14 +86,21 @@ public class HttpLlmClient implements LlmClient {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 400) {
-                throw new RuntimeException("LLM call failed with status " + response.statusCode());
+                throw new LlmException("LLM call failed with status " + response.statusCode());
             }
             return extractContent(response.body());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new RuntimeException("LLM call interrupted", e);
+            throw new LlmException("LLM call interrupted", e);
+        } catch (IOException e) {
+            if (isCausedBy(e, java.net.ConnectException.class)) {
+                throw new LlmException(
+                        "No se pudo conectar con el endpoint del LLM en '" + target + "'. Verifique la URL y que el servicio esté accesible.",
+                        e);
+            }
+            throw new LlmException("Error de E/S al invocar el LLM", e);
         } catch (Exception e) {
-            throw new RuntimeException("LLM call failed", e);
+            throw new LlmException("LLM call failed", e);
         }
     }
 
@@ -121,6 +138,17 @@ public class HttpLlmClient implements LlmClient {
                 .map(String::trim)
                 .filter(value -> !value.isEmpty())
                 .orElse(DEFAULT_MODEL);
+    }
+
+    private boolean isCausedBy(Throwable throwable, Class<? extends Throwable> type) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private String truncate(String value) {

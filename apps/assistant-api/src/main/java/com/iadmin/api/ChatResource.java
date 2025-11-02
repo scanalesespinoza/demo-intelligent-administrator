@@ -3,13 +3,16 @@ package com.iadmin.api;
 import com.iadmin.audit.AuditService;
 import com.iadmin.correlator.CorrelationService;
 import com.iadmin.llm.LlmClient;
+import com.iadmin.llm.LlmException;
 import com.iadmin.report.Report;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -51,7 +54,16 @@ public class ChatResource {
         int topN = Optional.ofNullable(safeReq.topN()).orElse(5);
 
         Report report = correlator.analyze(ns, from, to, topN);
-        String narrative = llm.redactReport(report);
+        String narrative;
+        try {
+            narrative = llm.redactReport(report);
+        } catch (LlmException e) {
+            Response failure = Response.status(Response.Status.BAD_GATEWAY)
+                    .entity(Map.of("error", e.getMessage()))
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+            throw new WebApplicationException(e, failure);
+        }
 
         audit.add(Map.of(
                 "ts", Instant.now().toString(),

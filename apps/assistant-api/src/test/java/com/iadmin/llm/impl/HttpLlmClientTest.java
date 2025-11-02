@@ -2,7 +2,9 @@ package com.iadmin.llm.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.iadmin.llm.LlmException;
 import com.iadmin.report.Report;
+import java.io.IOException;
 import java.net.Authenticator;
 import java.net.CookieHandler;
 import java.net.ProxySelector;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class HttpLlmClientTest {
 
@@ -71,6 +74,37 @@ class HttpLlmClientTest {
         client.redactReport(report);
 
         assertEquals("Bearer test-key", stub.lastRequest.headers().firstValue("Authorization").orElse(null));
+    }
+
+    @Test
+    void failWhenEndpointMissing() {
+        client.endpoint = "   ";
+
+        Report report = new Report(
+                new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
+                List.of(),
+                "",
+                List.of());
+
+        LlmException ex = assertThrows(LlmException.class, () -> client.redactReport(report));
+        assertEquals("llm.endpoint no configurado", ex.getMessage());
+    }
+
+    @Test
+    void failWithHelpfulMessageOnConnectionError() {
+        client.endpoint = "http://localhost:65535/test";
+        client.setHttpClient(new FailingHttpClient(new java.net.ConnectException("Connection refused")));
+
+        Report report = new Report(
+                new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
+                List.of(),
+                "",
+                List.of());
+
+        LlmException ex = assertThrows(LlmException.class, () -> client.redactReport(report));
+        assertEquals(
+                "No se pudo conectar con el endpoint del LLM en 'http://localhost:65535/test'. Verifique la URL y que el servicio esté accesible.",
+                ex.getMessage());
     }
 
     static class StubHttpClient extends HttpClient {
@@ -195,6 +229,81 @@ class HttpLlmClientTest {
                 return Version.HTTP_1_1;
             }
 
+        }
+    }
+
+    static class FailingHttpClient extends HttpClient {
+
+        private final IOException toThrow;
+
+        FailingHttpClient(IOException toThrow) {
+            this.toThrow = toThrow;
+        }
+
+        @Override
+        public Optional<CookieHandler> cookieHandler() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<Duration> connectTimeout() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Redirect followRedirects() {
+            return Redirect.NEVER;
+        }
+
+        @Override
+        public Optional<ProxySelector> proxy() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<Authenticator> authenticator() {
+            return Optional.empty();
+        }
+
+        @Override
+        public SSLContext sslContext() {
+            return null;
+        }
+
+        @Override
+        public SSLParameters sslParameters() {
+            return null;
+        }
+
+        @Override
+        public Optional<Executor> executor() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Version version() {
+            return Version.HTTP_1_1;
+        }
+
+        @Override
+        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler)
+                throws IOException, InterruptedException {
+            throw toThrow;
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
+                HttpResponse.BodyHandler<T> responseBodyHandler) {
+            CompletableFuture<HttpResponse<T>> future = new CompletableFuture<>();
+            future.completeExceptionally(toThrow);
+            return future;
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
+                HttpResponse.BodyHandler<T> responseBodyHandler,
+                HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+            return sendAsync(request, responseBodyHandler);
         }
     }
 }
