@@ -5,7 +5,16 @@ name: CI — Build & Test (assistant-api / assistant-ui)
   pull_request: {}
   push:
     branches: ["main", "develop", "feature/**"]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      push_assistant_api:
+        description: 'Build & push the assistant-api container image'
+        type: boolean
+        default: false
+      push_assistant_ui:
+        description: 'Build & push the assistant-ui container image'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -130,7 +139,7 @@ jobs:
       - build-and-test-api
       - aggregate
     environment: REGISTRY
-    if: ${{ (needs.detect-changes.outputs.assistant_api == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.push_assistant_api == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -184,7 +193,7 @@ jobs:
       - build-and-test-ui
       - aggregate
     environment: REGISTRY
-    if: ${{ (needs.detect-changes.outputs.assistant_ui == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.push_assistant_ui == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
