@@ -12,7 +12,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 LOGGER = logging.getLogger("gitops_deployer")
 SUPPORTED_MODULES: Tuple[str, ...] = ("assistant-api", "assistant-ui")
@@ -180,11 +180,16 @@ def manifest_invocation(
         manifests_prefix = Path("manifests")
         kustomization_names = ("kustomization.yaml", "kustomization.yml", "Kustomization")
 
+        kustomization_dirs: Set[Path] = set()
+
         for candidate in sorted(manifests_path.rglob("*")):
+            if any(parent in kustomization_dirs for parent in candidate.parents):
+                continue
             if candidate.is_dir():
                 if any((candidate / name).exists() for name in kustomization_names):
                     relative = (manifests_prefix / candidate.relative_to(manifests_path)).as_posix()
                     resource_entries.append(relative)
+                    kustomization_dirs.add(candidate)
                 continue
             if candidate.suffix.lower() not in {".yaml", ".yml"}:
                 continue
