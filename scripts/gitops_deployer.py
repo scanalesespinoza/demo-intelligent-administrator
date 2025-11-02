@@ -8,10 +8,14 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Iterable, List, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 LOGGER = logging.getLogger("gitops_deployer")
+SUPPORTED_MODULES: Tuple[str, ...] = ("assistant-api", "assistant-ui")
+ManifestEntry = Tuple[Path, Optional[str]]
 
 
 class GitOpsError(RuntimeError):
@@ -65,17 +69,120 @@ def discover_manifest_dirs(root_dir: Path) -> List[Path]:
 
 
 def run_for_each_dir(
-    manifest_dirs: Sequence[Path],
-    callback: Callable[[Path, Sequence[str]], int],
+    manifest_info: Sequence[ManifestEntry],
+    callback: Callable[[Path, Optional[str], Sequence[str]], int],
     extra_args: Sequence[str],
 ) -> int:
     exit_code = 0
-    for directory in manifest_dirs:
+    for directory, module in manifest_info:
         LOGGER.info("Processing %s", directory)
-        result = callback(directory, extra_args)
+        result = callback(directory, module, extra_args)
         if result not in (0, None):
             exit_code = int(result)
     return exit_code
+
+
+def detect_module(root_dir: Path, directory: Path) -> Optional[str]:
+    """Return the application module associated with a manifest directory."""
+
+    try:
+        relative_parts = directory.relative_to(root_dir).parts
+    except ValueError:
+        return None
+
+    for index, part in enumerate(relative_parts):
+        if part in SUPPORTED_MODULES:
+            next_index = index + 1
+            if next_index < len(relative_parts) and relative_parts[next_index] == "k8s":
+                if next_index + 1 == len(relative_parts):
+                    return part
+    return None
+
+
+def compute_image_overrides() -> Dict[str, str]:
+    """Build the mapping of module -> fully-qualified container image."""
+
+    registry = os.environ.get("IADMIN_IMAGE_REGISTRY", "quay.io/iadmin").rstrip("/")
+    tag = os.environ.get("IADMIN_IMAGE_TAG", "0.0.1")
+    overrides: Dict[str, str] = {
+        module: f"{registry}/{module}:{tag}"
+        for module in SUPPORTED_MODULES
+    }
+
+    raw_overrides = os.environ.get("IADMIN_IMAGE_OVERRIDES")
+    if raw_overrides:
+        for entry in raw_overrides.split(","):
+            if not entry.strip() or "=" not in entry:
+                continue
+            module, image = (segment.strip() for segment in entry.split("=", 1))
+            if module:
+                overrides[module] = image
+
+    return overrides
+
+
+def _split_image(image: str) -> Tuple[str, Optional[str]]:
+    """Separate an image into name and optional tag without losing registry ports."""
+
+    last_slash = image.rfind("/")
+    name_with_tag = image if last_slash == -1 else image[last_slash + 1 :]
+    if ":" in name_with_tag:
+        base, tag = name_with_tag.split(":", 1)
+        prefix = "" if last_slash == -1 else image[: last_slash + 1]
+        return prefix + base, tag
+    return image, None
+
+
+@contextmanager
+def manifest_invocation(
+    directory: Path,
+    module: Optional[str],
+    image_overrides: Dict[str, str],
+) -> Iterable[Tuple[str, str, bool]]:
+    """Yield the kubectl flag/path tuple for the given directory."""
+
+    if module is None or module not in image_overrides:
+        yield ("-f", str(directory), True)
+        return
+
+    image = image_overrides[module]
+    new_name, new_tag = _split_image(image)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        relative_target = os.path.relpath(directory, temp_path)
+        lines = [
+            "apiVersion: kustomize.config.k8s.io/v1beta1",
+            "kind: Kustomization",
+            "resources:",
+            f"  - {relative_target}",
+            "images:",
+            f"  - name: {module}",
+            f"    newName: {new_name}",
+        ]
+        if new_tag:
+            lines.append(f"    newTag: {new_tag}")
+        lines.append("")
+        (temp_path / "kustomization.yaml").write_text("\n".join(lines), encoding="utf-8")
+        yield ("-k", str(temp_path), False)
+
+
+def _apply_with_overrides(
+    client: str,
+    directory: Path,
+    module: Optional[str],
+    extra_args: Sequence[str],
+    image_overrides: Dict[str, str],
+    *,
+    server_side: bool,
+) -> int:
+    with manifest_invocation(directory, module, image_overrides) as (flag, path, allow_recursive):
+        command = ["apply", flag, path]
+        if allow_recursive:
+            command.append("--recursive")
+        if server_side:
+            command.extend(["--server-side", "--force-conflicts"])
+        command.extend(extra_args)
+        return run_client_command(client, command).returncode
 
 
 def run_client_command(client: str, args: Iterable[str]) -> subprocess.CompletedProcess:
@@ -84,13 +191,23 @@ def run_client_command(client: str, args: Iterable[str]) -> subprocess.Completed
     return subprocess.run(command, check=False)
 
 
-def command_status(client: str, manifest_dirs: Sequence[Path], extra_args: Sequence[str]) -> int:
+def command_status(
+    client: str,
+    manifest_info: Sequence[ManifestEntry],
+    extra_args: Sequence[str],
+    image_overrides: Dict[str, str],
+) -> int:
     LOGGER.info("Checking for drift against the desired state")
     exit_code = 0
 
-    for directory in manifest_dirs:
+    for directory, module in manifest_info:
         LOGGER.info("Diffing %s", directory)
-        process = run_client_command(client, ["diff", "-f", str(directory), "--recursive", *extra_args])
+        with manifest_invocation(directory, module, image_overrides) as (flag, path, allow_recursive):
+            command = ["diff", flag, path]
+            if allow_recursive:
+                command.append("--recursive")
+            command.extend(extra_args)
+            process = run_client_command(client, command)
         if process.returncode == 1:
             LOGGER.info("Differences detected for %s", directory)
             exit_code = 1
@@ -105,50 +222,60 @@ def command_status(client: str, manifest_dirs: Sequence[Path], extra_args: Seque
     return exit_code
 
 
-def command_sync(client: str, manifest_dirs: Sequence[Path], extra_args: Sequence[str]) -> int:
+def command_sync(
+    client: str,
+    manifest_info: Sequence[ManifestEntry],
+    extra_args: Sequence[str],
+    image_overrides: Dict[str, str],
+) -> int:
     LOGGER.info("Applying desired state to the cluster")
     return run_for_each_dir(
-        manifest_dirs,
-        lambda directory, args: run_client_command(
-            client, ["apply", "-f", str(directory), "--recursive", *args]
-        ).returncode,
+        manifest_info,
+        lambda directory, module, args: _apply_with_overrides(
+            client, directory, module, args, image_overrides, server_side=False
+        ),
         extra_args,
     )
 
 
-def command_normalize(client: str, manifest_dirs: Sequence[Path], extra_args: Sequence[str]) -> int:
+def command_normalize(
+    client: str,
+    manifest_info: Sequence[ManifestEntry],
+    extra_args: Sequence[str],
+    image_overrides: Dict[str, str],
+) -> int:
     LOGGER.info("Reconciling the cluster to the repository state")
     try:
-        command_status(client, manifest_dirs, extra_args)
+        command_status(client, manifest_info, extra_args, image_overrides)
     except GitOpsError:
         # Continue normalization even if status fails to allow correction via apply.
         pass
     return run_for_each_dir(
-        manifest_dirs,
-        lambda directory, args: run_client_command(
-            client,
-            [
-                "apply",
-                "-f",
-                str(directory),
-                "--recursive",
-                "--server-side",
-                "--force-conflicts",
-                *args,
-            ],
-        ).returncode,
+        manifest_info,
+        lambda directory, module, args: _apply_with_overrides(
+            client, directory, module, args, image_overrides, server_side=True
+        ),
         extra_args,
     )
 
 
-def command_uninstall(client: str, manifest_dirs: Sequence[Path], extra_args: Sequence[str]) -> int:
+def command_uninstall(
+    client: str,
+    manifest_info: Sequence[ManifestEntry],
+    extra_args: Sequence[str],
+    image_overrides: Dict[str, str],
+) -> int:
     LOGGER.info("Deleting managed resources")
     exit_code = 0
-    for directory in reversed(manifest_dirs):
+    for directory, module in reversed(manifest_info):
         LOGGER.info("Deleting manifests from %s", directory)
-        process = run_client_command(
-            client, ["delete", "-f", str(directory), "--recursive", "--ignore-not-found", *extra_args]
-        )
+        with manifest_invocation(directory, module, image_overrides) as (flag, path, allow_recursive):
+            command = ["delete", flag, path]
+            if allow_recursive:
+                command.append("--recursive")
+            command.append("--ignore-not-found")
+            command.extend(extra_args)
+            process = run_client_command(client, command)
         if process.returncode != 0:
             exit_code = process.returncode
     if exit_code == 0:
@@ -187,6 +314,10 @@ def main(argv: Sequence[str]) -> int:
         root_dir = Path(__file__).resolve().parent.parent
         client = detect_client()
         manifest_dirs = discover_manifest_dirs(root_dir)
+        manifest_info: List[ManifestEntry] = [
+            (directory, detect_module(root_dir, directory)) for directory in manifest_dirs
+        ]
+        image_overrides = compute_image_overrides()
 
         command_handlers = {
             "status": command_status,
@@ -196,7 +327,7 @@ def main(argv: Sequence[str]) -> int:
         }
         handler = command_handlers[args.command]
         extra_args = args.kubectl_options
-        return handler(client, manifest_dirs, extra_args)
+        return handler(client, manifest_info, extra_args, image_overrides)
     except GitOpsError as error:
         LOGGER.error("%s", error)
         return 1

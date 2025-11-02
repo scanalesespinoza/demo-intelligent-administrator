@@ -1,0 +1,58 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: assistant-ui
+  namespace: demo-int-admin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assistant-ui
+  namespace: demo-int-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assistant-ui
+  template:
+    metadata:
+      labels:
+        app: assistant-ui
+    spec:
+      serviceAccountName: assistant-ui
+      containers:
+        - name: app
+          image: quay.io/iadmin/assistant-ui:0.0.1
+          ports:
+            - containerPort: 8081
+          env:
+            - name: QUARKUS_HTTP_PORT
+              value: "8081"
+            - name: ASSISTANT_API_URL
+              value: http://assistant-api.demo-int-admin.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: assistant-ui
+  namespace: demo-int-admin
+spec:
+  selector:
+    app: assistant-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8081
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: assistant-ui
+  namespace: demo-int-admin
+spec:
+  to:
+    kind: Service
+    name: assistant-ui
+  port:
+    targetPort: http
