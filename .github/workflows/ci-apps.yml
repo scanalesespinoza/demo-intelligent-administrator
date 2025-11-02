@@ -7,6 +7,10 @@ name: CI — Build & Test (assistant-api / assistant-ui)
     branches: ["main", "develop", "feature/**"]
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+  pull-requests: read
+
 env:
   MAVEN_OPTS: -Xmx2g
   JAVA_VERSION: '21'
