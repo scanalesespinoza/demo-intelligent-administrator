@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iadmin.llm.LlmClient;
 import com.iadmin.llm.LlmException;
 import com.iadmin.report.Report;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.IOException;
@@ -12,13 +13,19 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 
 @ApplicationScoped
 public class HttpLlmClient implements LlmClient {
+
+    private static final Logger LOGGER = Logger.getLogger("API.HttpLlmClient");
 
     static final String SYSTEM_PROMPT = """
             Eres iAdmin. Recibirás un JSON `report` con hallazgos técnicos.
@@ -44,6 +51,15 @@ public class HttpLlmClient implements LlmClient {
 
     private volatile HttpClient httpClient = HttpClient.newHttpClient();
 
+    @PostConstruct
+    void init() {
+        LOGGER.infov(
+                "[INIT] HttpLlmClient listo. endpoint={0} model={1} apiKeyConfigurada={2}",
+                endpoint,
+                resolveModel(),
+                apiKey.map(value -> !value.isBlank()).orElse(false));
+    }
+
     @Override
     public String redactReport(Report report) {
         if (endpoint == null || endpoint.isBlank()) {
@@ -57,6 +73,8 @@ public class HttpLlmClient implements LlmClient {
             throw new LlmException("llm.endpoint inválido: " + endpoint, e);
         }
 
+        String requestId = UUID.randomUUID().toString();
+        Instant start = Instant.now();
         try {
             var prettyReport = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report);
             var user = Map.of(
@@ -84,22 +102,38 @@ public class HttpLlmClient implements LlmClient {
 
             var request = builder.build();
 
+            LOGGER.infov(
+                    "[COMM-START] requestId={0} target={1} model={2}",
+                    requestId,
+                    target,
+                    resolveModel());
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            long durationMs = Duration.between(start, Instant.now()).toMillis();
+            LOGGER.infov(
+                    "[COMM-END] requestId={0} target={1} status={2} durationMs={3}",
+                    requestId,
+                    target,
+                    response.statusCode(),
+                    durationMs);
             if (response.statusCode() >= 400) {
                 throw new LlmException("LLM call failed with status " + response.statusCode());
             }
             return extractContent(response.body());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            LOGGER.errorf(e, "[COMM-ERROR] requestId=%s target=%s llamada interrumpida", requestId, target);
             throw new LlmException("LLM call interrupted", e);
         } catch (IOException e) {
             if (isCausedBy(e, java.net.ConnectException.class)) {
-                throw new LlmException(
-                        "No se pudo conectar con el endpoint del LLM en '" + target + "'. Verifique la URL y que el servicio esté accesible.",
-                        e);
+                String message = "No se pudo conectar con el endpoint del LLM en '" + target
+                        + "'. Verifique la URL y que el servicio esté accesible.";
+                LOGGER.errorf(e, "[COMM-ERROR] requestId=%s target=%s model=%s", requestId, target, resolveModel());
+                throw new LlmException(message, e);
             }
+            LOGGER.errorf(e, "[COMM-ERROR] requestId=%s target=%s model=%s", requestId, target, resolveModel());
             throw new LlmException("Error de E/S al invocar el LLM", e);
         } catch (Exception e) {
+            LOGGER.errorf(e, "[COMM-ERROR] requestId=%s target=%s model=%s", requestId, target, resolveModel());
             throw new LlmException("LLM call failed", e);
         }
     }

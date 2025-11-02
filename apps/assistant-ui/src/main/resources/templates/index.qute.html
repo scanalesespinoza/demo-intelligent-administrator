@@ -11,6 +11,11 @@
     .error { color:#ef4444; } .warn { color:#f59e0b; }
     .ok { color:#10b981; } pre { background:#111318; padding:1rem; border-radius:.5rem; overflow-x:auto; }
     .badge { background:#3b82f6; padding:0.3rem 0.5rem; border-radius:0.5rem; }
+    section.status { margin-top:1rem; padding:1rem; border-radius:0.75rem; }
+    section.status.ok { background:#1f2937; border:1px solid #10b98155; }
+    section.status.error { background:#1f2937; border:1px solid #ef444455; }
+    .step-list { display:flex; flex-wrap:wrap; gap:0.5rem; margin:0; padding:0; list-style:none; }
+    .step-list li { background:#111318; padding:0.4rem 0.6rem; border-radius:0.5rem; }
   </style>
 </head>
 <body>
@@ -29,6 +34,28 @@
     </label>
     <button type="submit">Analizar</button>
   </form>
+
+  {#if status}
+  <section class="status {status.success ? 'ok' : 'error'}">
+    <h3>{status.success ? '✅ Estado del proceso' : '⚠️ Hubo un problema con la solicitud'}</h3>
+    {#if status.hasMessage}
+      <p>{status.message}</p>
+    {/if}
+    <p><strong>Seguimiento:</strong> {status.requestId ?: 'N/D'}</p>
+    {#if !status.completedSteps.isEmpty}
+      <p><strong>Pasos completados:</strong></p>
+      <ul class="step-list">{#for step in status.completedSteps}<li class="ok">{step}</li>{/for}</ul>
+    {/if}
+    {#if !status.failedSteps.isEmpty}
+      <p><strong>Pasos con error:</strong></p>
+      <ul class="step-list">{#for step in status.failedSteps}<li class="error">{step}</li>{/for}</ul>
+    {/if}
+    {#if !status.pendingSteps.isEmpty}
+      <p><strong>Pasos pendientes:</strong></p>
+      <ul class="step-list">{#for step in status.pendingSteps}<li class="warn">{step}</li>{/for}</ul>
+    {/if}
+  </section>
+  {/if}
 
   {#if report}
   <section class="report">

@@ -9,8 +9,10 @@ import com.iadmin.model.K8sEvent;
 import com.iadmin.model.LogChunk;
 import com.iadmin.model.PodSummary;
 import com.iadmin.report.Report;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -23,12 +25,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.regex.Pattern;
+import org.jboss.logging.Logger;
 
 @ApplicationScoped
 public class RuleBasedCorrelationService implements CorrelationService {
+
+    private static final Logger LOGGER = Logger.getLogger("API.CorrelationService");
 
     @Inject
     K8sConnector k8s;
@@ -49,11 +56,35 @@ public class RuleBasedCorrelationService implements CorrelationService {
     private static final Pattern RE_RANDOM =
             Pattern.compile("RANDOM_FAIL:(exit|loop|oom|io|probe)", Pattern.CASE_INSENSITIVE);
 
+    @PostConstruct
+    void init() {
+        LOGGER.infov(
+                "[INIT] RuleBasedCorrelationService listo. k8s={0}, cfg={1}",
+                k8s != null ? k8s.getClass().getSimpleName() : "<null>",
+                cfg != null ? cfg.getClass().getSimpleName() : "<null>");
+    }
+
     @Override
     public Report analyze(String ns, Instant from, Instant to, int topN) {
-        var deps = k8s.listDeployments(ns);
-        var pods = k8s.listPods(ns, Map.of());
-        var events = k8s.getEvents(ns, from, to);
+        String requestId = UUID.randomUUID().toString();
+        var deps = callWithLogging(
+                requestId,
+                "Kubernetes",
+                "listDeployments",
+                () -> k8s.listDeployments(ns),
+                "namespace=" + ns);
+        var pods = callWithLogging(
+                requestId,
+                "Kubernetes",
+                "listPods",
+                () -> k8s.listPods(ns, Map.of()),
+                "namespace=" + ns);
+        var events = callWithLogging(
+                requestId,
+                "Kubernetes",
+                "getEvents",
+                () -> k8s.getEvents(ns, from, to),
+                String.format("namespace=%s from=%s to=%s", ns, from, to));
 
         record Candidate(String deploy, int score) {
         }
@@ -69,9 +100,14 @@ public class RuleBasedCorrelationService implements CorrelationService {
             var deploy = c.deploy();
             var deployPods = pods.stream().filter(p -> belongsToDeployment(p, deploy)).toList();
             var ev = filterEventsFor(events, deploy);
-            var logs = collectLogs(ns, deployPods, from, to, 300);
+            var logs = collectLogs(requestId, ns, deploy, deployPods, from, to, 300);
 
-            var config = cfg.getDeploymentConfig(ns, deploy);
+            var config = callWithLogging(
+                    requestId,
+                    "Kubernetes",
+                    "getDeploymentConfig",
+                    () -> cfg.getDeploymentConfig(ns, deploy),
+                    String.format("namespace=%s deployment=%s", ns, deploy));
             var hints = extractConfigHints(config);
 
             var signals = deriveSignals(deployPods, ev, logs);
@@ -175,19 +211,64 @@ public class RuleBasedCorrelationService implements CorrelationService {
                 .toList();
     }
 
-    private List<LogChunk> collectLogs(String ns, List<PodSummary> pods,
+    private List<LogChunk> collectLogs(String requestId, String ns, String deploy, List<PodSummary> pods,
             Instant from, Instant to, int tail) {
         List<LogChunk> chunks = new ArrayList<>();
         for (var pod : pods) {
             List<PodSummary.ContainerState> containers = Optional.ofNullable(pod.containers()).orElse(List.of());
             for (var container : containers) {
+                Instant start = Instant.now();
+                LOGGER.infov(
+                        "[COMM-START] requestId={0} target=Kubernetes action=getPodLogs namespace={1} deployment={2} pod={3} container={4}",
+                        requestId,
+                        ns,
+                        deploy,
+                        pod.name(),
+                        container.name());
                 List<LogChunk> podLogs = Optional.ofNullable(
                                 k8s.getPodLogs(ns, pod.name(), container.name(), from, to, tail))
                         .orElse(List.of());
+                LOGGER.infov(
+                        "[COMM-END] requestId={0} target=Kubernetes action=getPodLogs namespace={1} deployment={2} pod={3} container={4} durationMs={5}",
+                        requestId,
+                        ns,
+                        deploy,
+                        pod.name(),
+                        container.name(),
+                        Duration.between(start, Instant.now()).toMillis());
                 chunks.addAll(podLogs);
             }
         }
         return chunks;
+    }
+
+    private <T> T callWithLogging(String requestId, String target, String action, Supplier<T> supplier, String context) {
+        Instant start = Instant.now();
+        LOGGER.infov(
+                "[COMM-START] requestId={0} target={1} action={2} context={3}",
+                requestId,
+                target,
+                action,
+                context);
+        try {
+            T result = supplier.get();
+            LOGGER.infov(
+                    "[COMM-END] requestId={0} target={1} action={2} durationMs={3}",
+                    requestId,
+                    target,
+                    action,
+                    Duration.between(start, Instant.now()).toMillis());
+            return result;
+        } catch (RuntimeException e) {
+            LOGGER.errorf(
+                    e,
+                    "[COMM-ERROR] requestId=%s target=%s action=%s context=%s",
+                    requestId,
+                    target,
+                    action,
+                    context);
+            throw e;
+        }
     }
 
     private Map<String, String> extractConfigHints(ConfigSnapshot snap) {

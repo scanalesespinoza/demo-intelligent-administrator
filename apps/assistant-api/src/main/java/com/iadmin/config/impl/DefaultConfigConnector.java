@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.EnvVarSource;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.LinkedHashMap;
@@ -17,15 +18,27 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @ApplicationScoped
 public class DefaultConfigConnector implements ConfigConnector {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("API.ConfigConnector");
 
     private final KubernetesClient client;
 
     @Inject
     public DefaultConfigConnector(KubernetesClient client) {
         this.client = client;
+    }
+
+    @PostConstruct
+    void init() {
+        String masterUrl = client != null && client.getConfiguration() != null
+                ? client.getConfiguration().getMasterUrl()
+                : "desconocido";
+        LOGGER.info(String.format("[INIT] ConfigConnector usando Kubernetes masterUrl=%s", masterUrl));
     }
 
     @Override
