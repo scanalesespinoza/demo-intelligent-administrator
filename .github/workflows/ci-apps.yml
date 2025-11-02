@@ -23,7 +23,9 @@ permissions:
 env:
   MAVEN_OPTS: -Xmx2g
   JAVA_VERSION: '21'
-  CONTAINER_IMAGE_REPOSITORY: quay.io/sergio_canales_e/iadmin
+  CONTAINER_IMAGE_REPOSITORY: quay.io/sergio_canales_e/iadmin/
+  APP_API_NAME: assistant-api
+  APP_UI_NAME: assistant-ui
 
 jobs:
   detect-changes:
@@ -155,6 +157,11 @@ jobs:
         working-directory: apps/assistant-api
         run: mvn -B -U -DskipTests package
 
+      - name: Determine assistant-api version
+        id: assistant_api_version
+        working-directory: apps/assistant-api
+        run: echo "app_version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)" >> "$GITHUB_OUTPUT"
+
       - name: Ensure registry credentials are provided
         env:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
@@ -182,8 +189,7 @@ jobs:
           file: apps/assistant-api/src/main/docker/Dockerfile.jvm
           push: true
           tags: |
-            ${{ env.CONTAINER_IMAGE_REPOSITORY }}:assistant-api-${{ github.sha }}
-            ${{ env.CONTAINER_IMAGE_REPOSITORY }}:assistant-api-latest
+            ${{ env.CONTAINER_IMAGE_REPOSITORY }}${{ env.APP_API_NAME }}:${{ steps.assistant_api_version.outputs.app_version }}
 
   build-and-push-ui:
     name: Build & Publish Image (assistant-ui)
@@ -208,6 +214,11 @@ jobs:
       - name: Maven package (skip tests)
         working-directory: apps/assistant-ui
         run: mvn -B -U -DskipTests package
+
+      - name: Determine assistant-ui version
+        id: assistant_ui_version
+        working-directory: apps/assistant-ui
+        run: echo "app_version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)" >> "$GITHUB_OUTPUT"
 
       - name: Ensure registry credentials are provided
         env:
@@ -236,5 +247,4 @@ jobs:
           file: apps/assistant-ui/src/main/docker/Dockerfile.jvm
           push: true
           tags: |
-            ${{ env.CONTAINER_IMAGE_REPOSITORY }}:assistant-ui-${{ github.sha }}
-            ${{ env.CONTAINER_IMAGE_REPOSITORY }}:assistant-ui-latest
+            ${{ env.CONTAINER_IMAGE_REPOSITORY }}${{ env.APP_UI_NAME }}:${{ steps.assistant_ui_version.outputs.app_version }}
