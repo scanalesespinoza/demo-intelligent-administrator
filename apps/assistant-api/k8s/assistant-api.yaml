@@ -62,6 +62,7 @@ spec:
       containers:
         - name: app
           image: quay.io/sergio_canales_e/iadmin/assistant-api:0.0.1
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           envFrom:
