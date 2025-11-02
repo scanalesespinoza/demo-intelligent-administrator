@@ -176,11 +176,31 @@ def manifest_invocation(
         temp_path = Path(temp_dir)
         manifests_path = temp_path / "manifests"
         shutil.copytree(directory, manifests_path, dirs_exist_ok=True)
+        resource_entries: List[str] = []
+        manifests_prefix = Path("manifests")
+        kustomization_names = ("kustomization.yaml", "kustomization.yml", "Kustomization")
+
+        for candidate in sorted(manifests_path.rglob("*")):
+            if candidate.is_dir():
+                if any((candidate / name).exists() for name in kustomization_names):
+                    relative = (manifests_prefix / candidate.relative_to(manifests_path)).as_posix()
+                    resource_entries.append(relative)
+                continue
+            if candidate.suffix.lower() not in {".yaml", ".yml"}:
+                continue
+            relative = (manifests_prefix / candidate.relative_to(manifests_path)).as_posix()
+            resource_entries.append(relative)
+
+        if not resource_entries:
+            raise GitOpsError(
+                f"No YAML manifests were found in '{directory}'. Unable to generate kustomization overrides."
+            )
+
         lines = [
             "apiVersion: kustomize.config.k8s.io/v1beta1",
             "kind: Kustomization",
             "resources:",
-            "  - ./manifests",
+            *[f"  - ./{entry}" for entry in resource_entries],
             "images:",
             f"  - name: {module}",
             f"    newName: {new_name}",
