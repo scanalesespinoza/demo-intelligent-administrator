@@ -5,6 +5,17 @@ metadata:
   name: assistant-ui
   namespace: demo-int-admin
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: assistant-ui-config
+  namespace: demo-int-admin
+data:
+  QUARKUS_APPLICATION_VERSION: "0.0.1"
+  QUARKUS_HTTP_PORT: "8081"
+  QUARKUS_QUTE_STRICT_RENDERING: "false"
+  ASSISTANT_API_URL: "http://assistant-api.demo-int-admin.svc.cluster.local"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,11 +37,9 @@ spec:
           image: quay.io/iadmin/assistant-ui:0.0.1
           ports:
             - containerPort: 8081
-          env:
-            - name: QUARKUS_HTTP_PORT
-              value: "8081"
-            - name: ASSISTANT_API_URL
-              value: http://assistant-api.demo-int-admin.svc.cluster.local
+          envFrom:
+            - configMapRef:
+                name: assistant-ui-config
 ---
 apiVersion: v1
 kind: Service
