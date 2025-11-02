@@ -80,7 +80,7 @@ jobs:
     needs:
       - detect-changes
       - build-and-test
-    if: ${{ needs.detect-changes.outputs.assistant_api == 'true' }}
+    if: ${{ needs.detect-changes.outputs.assistant_api == 'true' || needs.detect-changes.outputs.assistant_ui == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -97,6 +97,7 @@ jobs:
     needs:
       - detect-changes
       - build-and-test
+      - aggregate
     if: ${{ needs.detect-changes.outputs.assistant_api == 'true' }}
     steps:
       - name: Checkout
@@ -140,6 +141,7 @@ jobs:
     needs:
       - detect-changes
       - build-and-test
+      - aggregate
     if: ${{ needs.detect-changes.outputs.assistant_ui == 'true' }}
     steps:
       - name: Checkout
