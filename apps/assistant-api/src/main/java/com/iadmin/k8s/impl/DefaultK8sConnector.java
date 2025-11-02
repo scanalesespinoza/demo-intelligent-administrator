@@ -14,6 +14,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.PrettyLoggable;
 import io.fabric8.kubernetes.client.dsl.TailPrettyLoggable;
 import io.fabric8.kubernetes.client.dsl.TimeTailPrettyLoggable;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Instant;
@@ -32,13 +33,21 @@ import org.slf4j.LoggerFactory;
 @ApplicationScoped
 public class DefaultK8sConnector implements K8sConnector {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultK8sConnector.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger("API.K8sConnector");
 
     private final KubernetesClient client;
 
     @Inject
     public DefaultK8sConnector(KubernetesClient client) {
         this.client = client;
+    }
+
+    @PostConstruct
+    void init() {
+        String masterUrl = client != null && client.getConfiguration() != null
+                ? client.getConfiguration().getMasterUrl()
+                : "desconocido";
+        LOGGER.info(String.format("[INIT] KubernetesClient configurado. masterUrl=%s", masterUrl));
     }
 
     @Override
