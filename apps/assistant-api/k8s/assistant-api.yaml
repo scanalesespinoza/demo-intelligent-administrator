@@ -47,7 +47,7 @@ spec:
       serviceAccountName: assistant-api
       containers:
         - name: app
-          image: image-registry.openshift-image-registry.svc:5000/demo-int-admin/assistant-api:latest
+          image: quay.io/iadmin/assistant-api:0.0.1
           ports:
             - containerPort: 8080
           env:
