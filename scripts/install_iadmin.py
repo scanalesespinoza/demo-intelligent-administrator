@@ -275,10 +275,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Reemplaza el directorio de destino si ya existe al clonar.",
     )
+    parser.set_defaults(skip_containers=True)
     parser.add_argument(
         "--skip-containers",
         action="store_true",
-        help="Omite la construcción de imágenes de contenedor.",
+        help="Omite la construcción de imágenes de contenedor (comportamiento por defecto).",
+    )
+    parser.add_argument(
+        "--build-containers",
+        dest="skip_containers",
+        action="store_false",
+        help="Fuerza la construcción de imágenes de contenedor.",
     )
     parser.add_argument(
         "--build-native",
