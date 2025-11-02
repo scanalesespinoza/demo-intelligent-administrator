@@ -58,13 +58,37 @@ def discover_manifest_dirs(root_dir: Path) -> List[Path]:
         )
 
     validated: List[Path] = []
+    explicit_dirs = bool(env_value)
+
+    def _contains_yaml(directory: Path) -> bool:
+        for pattern in ("*.yml", "*.yaml"):
+            try:
+                next(directory.rglob(pattern))
+                return True
+            except StopIteration:
+                continue
+        return False
+
     for candidate in candidates:
         candidate_path = candidate if candidate.is_absolute() else root_dir / candidate
         if not candidate_path.is_dir():
             raise GitOpsError(f"Manifest directory not found: {candidate_path}")
-        if not any(candidate_path.rglob("*.yml")) and not any(candidate_path.rglob("*.yaml")):
-            raise GitOpsError(f"Manifest directory '{candidate_path}' does not contain any YAML resources.")
+        if not _contains_yaml(candidate_path):
+            if explicit_dirs:
+                raise GitOpsError(
+                    f"Manifest directory '{candidate_path}' does not contain any YAML resources."
+                )
+            LOGGER.warning(
+                "Skipping manifest directory %s because it does not contain any YAML resources.",
+                candidate_path,
+            )
+            continue
         validated.append(candidate_path.resolve())
+
+    if not validated:
+        raise GitOpsError(
+            "No manifest directories with YAML resources were discovered. Set GITOPS_MANIFEST_DIRS to a comma-separated list of directories."
+        )
 
     return validated
 
