@@ -139,7 +139,7 @@ jobs:
       - build-and-test-api
       - aggregate
     environment: REGISTRY
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.push_assistant_api == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_assistant_api == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -193,7 +193,7 @@ jobs:
       - build-and-test-ui
       - aggregate
     environment: REGISTRY
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.push_assistant_ui == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_assistant_ui == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
