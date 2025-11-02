@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -149,12 +150,13 @@ def manifest_invocation(
     new_name, new_tag = _split_image(image)
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        relative_target = os.path.relpath(directory, temp_path)
+        manifests_path = temp_path / "manifests"
+        shutil.copytree(directory, manifests_path, dirs_exist_ok=True)
         lines = [
             "apiVersion: kustomize.config.k8s.io/v1beta1",
             "kind: Kustomization",
             "resources:",
-            f"  - {relative_target}",
+            "  - ./manifests",
             "images:",
             f"  - name: {module}",
             f"    newName: {new_name}",
