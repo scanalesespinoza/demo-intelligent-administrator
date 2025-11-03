@@ -13,6 +13,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import io.quarkus.qute.CheckedTemplate;
 import io.quarkus.qute.TemplateInstance;
+import io.quarkus.qute.TemplateException;
 import java.util.List;
 import org.jboss.logging.Logger;
 
@@ -31,11 +32,12 @@ public class IndexResource {
 
     @GET
     @Produces(MediaType.TEXT_HTML)
-    public TemplateInstance index(
+    public String index(
             @QueryParam("ns") String namespace,
             @QueryParam("minutes") @DefaultValue("15") int minutes) {
         String effectiveNamespace = (namespace == null || namespace.isBlank()) ? "demo-int-admin" : namespace;
         LOGGER.infov("[UI-REQUEST] namespace={0} minutes={1}", effectiveNamespace, minutes);
+        TemplateInstance view;
         try {
             FetchResult result = api.fetchReport(effectiveNamespace, minutes);
             if (result == null) {
@@ -47,13 +49,14 @@ public class IndexResource {
                         List.of());
                 LOGGER.warnf(
                         "[UI-REQUEST-WARN] namespace=%s la respuesta del cliente fue nula", effectiveNamespace);
-                return Templates.index(effectiveNamespace, null, status);
+                view = Templates.index(effectiveNamespace, null, status);
+            } else {
+                LOGGER.infov(
+                        "[UI-REQUEST-SUCCESS] namespace={0} requestId={1}",
+                        effectiveNamespace,
+                        result.status().requestId());
+                view = Templates.index(effectiveNamespace, result.report(), result.status());
             }
-            LOGGER.infov(
-                    "[UI-REQUEST-SUCCESS] namespace={0} requestId={1}",
-                    effectiveNamespace,
-                    result.status().requestId());
-            return Templates.index(effectiveNamespace, result.report(), result.status());
         } catch (ExternalServiceException e) {
             RequestStatus status = e.status();
             if (status == null) {
@@ -70,7 +73,22 @@ public class IndexResource {
                     effectiveNamespace,
                     status != null ? status.requestId() : "<sin-id>",
                     status != null ? status.message() : e.getMessage());
-            return Templates.index(effectiveNamespace, null, status);
+            view = Templates.index(effectiveNamespace, null, status);
+        }
+        return renderTemplate(view, effectiveNamespace);
+    }
+
+    private String renderTemplate(TemplateInstance template, String namespace) {
+        try {
+            return template.render();
+        } catch (TemplateException e) {
+            LOGGER.errorf(e, "[UI-TEMPLATE-ERROR] namespace=%s mensaje=%s", namespace, e.getMessage());
+            return "<!DOCTYPE html>\n"
+                    + "<html lang=\"es\">\n"
+                    + "<head><meta charset=\"UTF-8\"><title>Error</title></head>\n"
+                    + "<body><h3>Error al renderizar la vista</h3><p>"
+                    + e.getMessage()
+                    + "</p></body></html>";
         }
     }
 }

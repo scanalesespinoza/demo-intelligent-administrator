@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -30,6 +31,8 @@ public class ApiClient {
 
     @Inject
     ObjectMapper mapper;
+
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(35);
 
     @PostConstruct
     void init() {
@@ -82,7 +85,7 @@ public class ApiClient {
             pending.remove(currentStep);
             HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(apiUrl + "/chat"))
                     .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(15))
+                    .timeout(REQUEST_TIMEOUT)
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(request)))
                     .build();
             completed.add(currentStep);
@@ -136,6 +139,24 @@ public class ApiClient {
             LOGGER.errorf(
                     "[COMM-ERROR] requestId=%s url=%s detalle=%s", requestId, apiUrl, e.getMessage());
             throw e;
+        } catch (HttpTimeoutException e) {
+            failed.add(currentStep);
+            RequestStatus status = RequestStatus.failure(
+                    requestId,
+                    "La solicitud a la Assistant API superó el tiempo de espera configurado.",
+                    completed,
+                    failed,
+                    pending);
+            long durationMs = Duration.between(requestStart, Instant.now()).toMillis();
+            LOGGER.errorf(
+                    "[COMM-TIMEOUT] requestId=%s url=%s parametros={namespace=%s,minutes=%s} timeoutSeconds=%s durationMs=%s",
+                    requestId,
+                    apiUrl,
+                    namespace,
+                    minutes,
+                    REQUEST_TIMEOUT.toSeconds(),
+                    durationMs);
+            throw new ExternalServiceException("Assistant API request timed out", status, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             failed.add(currentStep);
