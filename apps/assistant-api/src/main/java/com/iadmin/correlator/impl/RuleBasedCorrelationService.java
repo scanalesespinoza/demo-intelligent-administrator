@@ -212,6 +212,13 @@ public class RuleBasedCorrelationService implements CorrelationService {
             score += 2;
         }
 
+        boolean startFailure = events.stream()
+                .filter(e -> belongsToDeploymentEvent(e, d.name()))
+                .anyMatch(e -> RE_START_FAILURE.matcher((orEmpty(e.reason()) + " " + orEmpty(e.message()))).find());
+        if (startFailure) {
+            score += 3;
+        }
+
         return score;
     }
 
