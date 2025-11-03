@@ -11,6 +11,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 import io.quarkus.qute.CheckedTemplate;
 import io.quarkus.qute.TemplateInstance;
 import io.quarkus.qute.TemplateException;
@@ -32,7 +33,7 @@ public class IndexResource {
 
     @GET
     @Produces(MediaType.TEXT_HTML)
-    public String index(
+    public Response index(
             @QueryParam("ns") String namespace,
             @QueryParam("minutes") @DefaultValue("15") int minutes) {
         String effectiveNamespace = (namespace == null || namespace.isBlank()) ? "demo-int-admin" : namespace;
@@ -78,17 +79,22 @@ public class IndexResource {
         return renderTemplate(view, effectiveNamespace);
     }
 
-    private String renderTemplate(TemplateInstance template, String namespace) {
+    private Response renderTemplate(TemplateInstance template, String namespace) {
         try {
-            return template.render();
+            String html = template.render();
+            return Response.ok(html, MediaType.TEXT_HTML_TYPE).build();
         } catch (TemplateException e) {
             LOGGER.errorf(e, "[UI-TEMPLATE-ERROR] namespace=%s mensaje=%s", namespace, e.getMessage());
-            return "<!DOCTYPE html>\n"
+            String fallback = "<!DOCTYPE html>\n"
                     + "<html lang=\"es\">\n"
                     + "<head><meta charset=\"UTF-8\"><title>Error</title></head>\n"
                     + "<body><h3>Error al renderizar la vista</h3><p>"
                     + e.getMessage()
                     + "</p></body></html>";
+            return Response.serverError()
+                    .type(MediaType.TEXT_HTML_TYPE)
+                    .entity(fallback)
+                    .build();
         }
     }
 }
