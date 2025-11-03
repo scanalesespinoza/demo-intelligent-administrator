@@ -9,6 +9,11 @@ public record PodSummary(
         int restarts,
         List<ContainerState> containers
 ) {
-    public static record ContainerState(String name, boolean ready) {
+    public static record ContainerState(
+            String name,
+            boolean ready,
+            String lastTerminationReason,
+            Integer lastExitCode
+    ) {
     }
 }

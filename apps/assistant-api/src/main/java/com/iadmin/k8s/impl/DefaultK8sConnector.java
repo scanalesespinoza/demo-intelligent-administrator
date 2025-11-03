@@ -97,9 +97,25 @@ public class DefaultK8sConnector implements K8sConnector {
                             .mapToInt(Integer::intValue)
                             .sum();
                     var containerStates = statuses.stream()
-                            .map(status -> new PodSummary.ContainerState(
-                                    status.getName(),
-                                    Boolean.TRUE.equals(status.getReady())))
+                            .map(status -> {
+                                var currentState = Optional.ofNullable(status.getState())
+                                        .map(io.fabric8.kubernetes.api.model.ContainerState::getTerminated)
+                                        .orElse(null);
+                                var lastState = Optional.ofNullable(status.getLastState())
+                                        .map(io.fabric8.kubernetes.api.model.ContainerState::getTerminated)
+                                        .orElse(null);
+                                String terminationReason = currentState != null && currentState.getReason() != null
+                                        ? currentState.getReason()
+                                        : lastState != null ? lastState.getReason() : null;
+                                Integer exitCode = currentState != null && currentState.getExitCode() != null
+                                        ? currentState.getExitCode()
+                                        : lastState != null ? lastState.getExitCode() : null;
+                                return new PodSummary.ContainerState(
+                                        status.getName(),
+                                        Boolean.TRUE.equals(status.getReady()),
+                                        terminationReason,
+                                        exitCode);
+                            })
                             .toList();
                     String phase = Optional.ofNullable(pod.getStatus()).map(status -> status.getPhase()).orElse("Unknown");
                     return new PodSummary(

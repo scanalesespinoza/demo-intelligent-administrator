@@ -12,6 +12,7 @@ import jakarta.inject.Inject;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -28,6 +29,10 @@ public class HttpLlmClient implements LlmClient {
             - Escribe en español, claro y conciso.
             - Secciones: Resumen, Servicios afectados (con síntomas), Evidencia clave (eventos/logs), Posibles causas, Recomendaciones.
             - Si algo falta, dilo explícitamente (“no se encontró evidencia de …”).
+            - Usa `context` en cada finding (metrics, dependencies, evidenceCorrelations, reasoningHints) para correlacionar señales, métricas y eventos.
+            - No confirmes un OOM si `metrics.confirmedOomEvidence` es 0 y solo hay menciones superficiales.
+            - Cuando existan dependencias, explica el impacto entre servicios.
+            - Sigue también las indicaciones en `report.context.globalHints` y menciona contradicciones entre fuentes.
             """;
 
     private static final String DEFAULT_MODEL = "granite-7b-instruct";
@@ -73,7 +78,7 @@ public class HttpLlmClient implements LlmClient {
         Instant start = Instant.now();
         try {
             var prettyReport = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report);
-            var prompt = buildPrompt(prettyReport);
+            var prompt = buildPrompt(prettyReport, report.context());
             LOGGER.infov(
                     "[COMM-START] requestId={0} target={1} model={2}",
                     requestId,
@@ -93,13 +98,24 @@ public class HttpLlmClient implements LlmClient {
         }
     }
 
-    String buildPrompt(String prettyReport) {
-        return SYSTEM_PROMPT
-                + "\n\n"
-                + "report:\n"
-                + "```json\n"
-                + prettyReport
-                + "\n```";
+    String buildPrompt(String prettyReport, Report.DiagnosticContext diagnosticContext) {
+        StringBuilder builder = new StringBuilder(SYSTEM_PROMPT);
+        List<String> hints = diagnosticContext != null && diagnosticContext.globalHints() != null
+                ? diagnosticContext.globalHints()
+                : List.of();
+        if (!hints.isEmpty()) {
+            builder.append("\n\nIndicaciones del analizador:\n");
+            for (String hint : hints) {
+                if (hint == null || hint.isBlank()) {
+                    continue;
+                }
+                builder.append("- ").append(hint).append('\n');
+            }
+        }
+        builder.append("\nreport:\n```json\n");
+        builder.append(prettyReport);
+        builder.append("\n```");
+        return builder.toString();
     }
 
     private String extractContent(String response) {
