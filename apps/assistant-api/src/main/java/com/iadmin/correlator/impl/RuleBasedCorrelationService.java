@@ -621,6 +621,18 @@ public class RuleBasedCorrelationService implements CorrelationService {
 
         Number restarts = metrics.getOrDefault("totalRestarts", 0);
         Number warnings = metrics.getOrDefault("warningEvents", 0);
+        Number notReady = metrics.getOrDefault("notReadyContainers", 0);
+        Number podCount = metrics.getOrDefault("podCount", 0);
+
+        if (summary.signals().isEmpty()) {
+            correlations.add(String.format(Locale.ROOT,
+                    "Sin señales críticas detectadas: pods=%d, contenedores no listos=%d, reinicios=%d, eventos warning=%d.",
+                    podCount.longValue(),
+                    notReady.longValue(),
+                    restarts.longValue(),
+                    warnings.longValue()));
+        }
+
         if (restarts.longValue() > 0 && warnings.longValue() == 0) {
             correlations.add("Hay reinicios registrados sin eventos de Warning recientes; podría tratarse de un redeploy controlado.");
         }
@@ -659,6 +671,9 @@ public class RuleBasedCorrelationService implements CorrelationService {
             Map<String, Report.DependencyHealth> dependencies,
             SignalsSummary summary) {
         List<String> hints = new ArrayList<>();
+        if (summary.signals().isEmpty()) {
+            hints.add("Cuando el servicio esté Healthy, explica que no hay señales ni eventos y cita metrics.* que lo respalden.");
+        }
         hints.add("Cruza metrics.totalRestarts con metrics.warningEvents para dimensionar la severidad real.");
         if (!dependencies.isEmpty()) {
             hints.add("Valida si los servicios en context.dependencies también presentan hallazgos en el reporte.");
@@ -707,6 +722,11 @@ public class RuleBasedCorrelationService implements CorrelationService {
     private List<String> buildGlobalHints(List<Report.Finding> findings) {
         List<String> hints = new ArrayList<>();
         hints.add("Correlaciona señales, métricas y eventos antes de concluir una causa.");
+        boolean hasHealthy = findings.stream()
+                .anyMatch(f -> "Healthy".equalsIgnoreCase(f.status()));
+        if (hasHealthy) {
+            hints.add("Resume los servicios saludables y detalla la evidencia de estabilidad (reinicios, warningEvents, readiness).");
+        }
         boolean hasDependencies = findings.stream()
                 .map(Report.Finding::context)
                 .filter(Objects::nonNull)
@@ -920,6 +940,37 @@ public class RuleBasedCorrelationService implements CorrelationService {
                 .filter(f -> !"Healthy".equalsIgnoreCase(f.status()))
                 .count();
 
+        if (problematic == 0) {
+            long totalServices = findings.size();
+            long totalRestarts = findings.stream()
+                    .map(Report.Finding::context)
+                    .filter(Objects::nonNull)
+                    .map(Report.FindingContext::metrics)
+                    .filter(Objects::nonNull)
+                    .mapToLong(metrics -> metrics.getOrDefault("totalRestarts", 0).longValue())
+                    .sum();
+            long totalWarnings = findings.stream()
+                    .map(Report.Finding::context)
+                    .filter(Objects::nonNull)
+                    .map(Report.FindingContext::metrics)
+                    .filter(Objects::nonNull)
+                    .mapToLong(metrics -> metrics.getOrDefault("warningEvents", 0).longValue())
+                    .sum();
+            long notReady = findings.stream()
+                    .map(Report.Finding::context)
+                    .filter(Objects::nonNull)
+                    .map(Report.FindingContext::metrics)
+                    .filter(Objects::nonNull)
+                    .mapToLong(metrics -> metrics.getOrDefault("notReadyContainers", 0).longValue())
+                    .sum();
+            return String.format(Locale.ROOT,
+                    "Todos los %d servicios analizados se reportan saludables (restarts=%d, eventos warning=%d, contenedores no listos=%d).",
+                    totalServices,
+                    totalRestarts,
+                    totalWarnings,
+                    notReady);
+        }
+
         Map<String, Long> causeCounts = findings.stream()
                 .map(Report.Finding::causeLikely)
                 .filter(cause -> cause != null && !cause.equals("Unknown"))
@@ -939,22 +990,37 @@ public class RuleBasedCorrelationService implements CorrelationService {
     }
 
     private List<String> recommendations(List<Report.Finding> findings) {
-        Map<String, String> advice = Map.of(
-                "ThreadPoolExhaustion", "Revisar la configuración del pool de hilos y ajustar límites de concurrencia.",
-                "ImagePull", "Verificar credenciales y disponibilidad de la imagen en el registro.",
-                "OOM", "Ajustar límites/memoria de los pods o revisar fugas en la aplicación.",
-                "Probe", "Revisar umbrales de probes y tiempos de arranque del servicio.",
-                "StartFailure", "Revisar el comando/entrypoint del contenedor y que los binarios referenciados existan.",
-                "Timeout", "Verificar latencia/errores en dependencias upstream y tiempos de espera.",
-                "RandomFail", "Analizar el componente random-failer y revisar los artefactos de falla.",
-                "ConfigMissing", "Confirmar que ConfigMaps/Secrets requeridos estén presentes y referenciados.");
+        Map<String, String> advice = new LinkedHashMap<>();
+        advice.put("ThreadPoolExhaustion", "Revisar la configuración del pool de hilos y ajustar límites de concurrencia.");
+        advice.put("ImagePull", "Verificar credenciales y disponibilidad de la imagen en el registro.");
+        advice.put("OOM", "Ajustar límites/memoria de los pods o revisar fugas en la aplicación.");
+        advice.put("Probe", "Revisar umbrales de probes y tiempos de arranque del servicio.");
+        advice.put("StartFailure", "Revisar el comando/entrypoint del contenedor y que los binarios referenciados existan.");
+        advice.put("Timeout", "Verificar latencia/errores en dependencias upstream y tiempos de espera.");
+        advice.put("RandomFail", "Analizar el componente random-failer y revisar los artefactos de falla.");
+        advice.put("ConfigMissing", "Confirmar que ConfigMaps/Secrets requeridos estén presentes y referenciados.");
+        advice.put("Unknown", "La causa sigue sin confirmarse; recopila métricas adicionales, eventos y trazas antes de escalar.");
 
-        return findings.stream()
+        List<String> recs = findings.stream()
                 .map(Report.Finding::causeLikely)
-                .filter(cause -> cause != null && !cause.equals("Unknown"))
+                .filter(Objects::nonNull)
                 .distinct()
                 .map(cause -> advice.getOrDefault(cause, "Investigar manualmente la causa reportada."))
                 .toList();
+
+        if (recs.isEmpty()) {
+            boolean allHealthy = !findings.isEmpty()
+                    && findings.stream().allMatch(f -> "Healthy".equalsIgnoreCase(f.status()));
+            if (allHealthy) {
+                return List.of("Sin acciones correctivas: los servicios evaluados están saludables; mantener monitoreo preventivo.");
+            }
+            if (findings.isEmpty()) {
+                return List.of();
+            }
+            return List.of("Revisar manualmente la evidencia disponible y recopilar más datos del clúster.");
+        }
+
+        return recs;
     }
 
     private record SignalsSummary(
