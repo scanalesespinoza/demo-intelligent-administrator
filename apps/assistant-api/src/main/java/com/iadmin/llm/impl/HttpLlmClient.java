@@ -1,22 +1,17 @@
 package com.iadmin.llm.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iadmin.llm.LlmClient;
 import com.iadmin.llm.LlmException;
 import com.iadmin.report.Report;
+import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.openai.OpenAiChatModel;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -49,7 +44,7 @@ public class HttpLlmClient implements LlmClient {
     @Inject
     ObjectMapper mapper;
 
-    private volatile HttpClient httpClient = HttpClient.newHttpClient();
+    private volatile ChatLanguageModel chatModel;
 
     @PostConstruct
     void init() {
@@ -58,6 +53,7 @@ public class HttpLlmClient implements LlmClient {
                 endpoint,
                 resolveModel(),
                 apiKey.map(value -> !value.isBlank()).orElse(false));
+        this.chatModel = buildChatModel();
     }
 
     @Override
@@ -77,94 +73,40 @@ public class HttpLlmClient implements LlmClient {
         Instant start = Instant.now();
         try {
             var prettyReport = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report);
-            var user = Map.of(
-                    "role", "user",
-                    "content", "report:\n```json\n" + prettyReport + "\n```"
-            );
-            var sys = Map.of(
-                    "role", "system",
-                    "content", SYSTEM_PROMPT
-            );
-            var body = Map.of(
-                    "model", resolveModel(),
-                    "messages", List.of(sys, user),
-                    "temperature", 0.2,
-                    "max_tokens", 800
-            );
-
-            var builder = HttpRequest.newBuilder(target)
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)));
-
-            apiKey.map(String::trim)
-                    .filter(value -> !value.isEmpty())
-                    .ifPresent(value -> builder.header("Authorization", "Bearer " + value));
-
-            var request = builder.build();
-
+            var prompt = buildPrompt(prettyReport);
             LOGGER.infov(
                     "[COMM-START] requestId={0} target={1} model={2}",
                     requestId,
                     target,
                     resolveModel());
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            String response = chatLanguageModel().generate(prompt);
             long durationMs = Duration.between(start, Instant.now()).toMillis();
             LOGGER.infov(
-                    "[COMM-END] requestId={0} target={1} status={2} durationMs={3}",
+                    "[COMM-END] requestId={0} target={1} durationMs={2}",
                     requestId,
                     target,
-                    response.statusCode(),
                     durationMs);
-            if (response.statusCode() >= 400) {
-                throw new LlmException("LLM call failed with status " + response.statusCode());
-            }
-            return extractContent(response.body());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            LOGGER.errorf(e, "[COMM-ERROR] requestId=%s target=%s llamada interrumpida", requestId, target);
-            throw new LlmException("LLM call interrupted", e);
-        } catch (IOException e) {
-            if (isCausedBy(e, java.net.ConnectException.class)) {
-                String message = "No se pudo conectar con el endpoint del LLM en '" + target
-                        + "'. Verifique la URL y que el servicio esté accesible.";
-                LOGGER.errorf(e, "[COMM-ERROR] requestId=%s target=%s model=%s", requestId, target, resolveModel());
-                throw new LlmException(message, e);
-            }
-            LOGGER.errorf(e, "[COMM-ERROR] requestId=%s target=%s model=%s", requestId, target, resolveModel());
-            throw new LlmException("Error de E/S al invocar el LLM", e);
+            return extractContent(response);
         } catch (Exception e) {
             LOGGER.errorf(e, "[COMM-ERROR] requestId=%s target=%s model=%s", requestId, target, resolveModel());
             throw new LlmException("LLM call failed", e);
         }
     }
 
-    private String extractContent(String raw) {
-        try {
-            JsonNode root = mapper.readTree(raw);
-            JsonNode choices = root.path("choices");
-            if (choices.isArray() && choices.size() > 0) {
-                JsonNode first = choices.get(0);
-                JsonNode messageContent = first.path("message").path("content");
-                if (!messageContent.isMissingNode() && !messageContent.isNull()) {
-                    return messageContent.asText();
-                }
-                JsonNode text = first.path("text");
-                if (!text.isMissingNode() && !text.isNull()) {
-                    return text.asText();
-                }
-            }
-            JsonNode output = root.path("output");
-            if (output.isArray() && output.size() > 0) {
-                JsonNode first = output.get(0);
-                JsonNode content = first.path("content");
-                if (content.isTextual()) {
-                    return content.asText();
-                }
-            }
-            return "No se pudo interpretar la respuesta del LLM (fallback). raw=" + truncate(raw);
-        } catch (Exception e) {
-            return "No se pudo interpretar la respuesta del LLM (fallback). raw=" + truncate(raw);
-        }
+    String buildPrompt(String prettyReport) {
+        return SYSTEM_PROMPT
+                + "\n\n"
+                + "report:\n"
+                + "```json\n"
+                + prettyReport
+                + "\n```";
+    }
+
+    private String extractContent(String response) {
+        return Optional.ofNullable(response)
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .orElse("No se pudo interpretar la respuesta del LLM (fallback).");
     }
 
     private String resolveModel() {
@@ -174,25 +116,43 @@ public class HttpLlmClient implements LlmClient {
                 .orElse(DEFAULT_MODEL);
     }
 
-    private boolean isCausedBy(Throwable throwable, Class<? extends Throwable> type) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (type.isInstance(current)) {
-                return true;
+    private ChatLanguageModel buildChatModel() {
+        URI target = URI.create(endpoint.trim());
+        OpenAiChatModel.OpenAiChatModelBuilder builder = OpenAiChatModel.builder()
+                .modelName(resolveModel())
+                .baseUrl(normalizeBaseUrl(target))
+                .temperature(0.2d)
+                .maxTokens(Integer.valueOf(800));
+
+        apiKey.map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .ifPresent(builder::apiKey);
+
+        return builder.build();
+    }
+
+    private ChatLanguageModel chatLanguageModel() {
+        ChatLanguageModel current = this.chatModel;
+        if (current == null) {
+            synchronized (this) {
+                if (chatModel == null) {
+                    chatModel = buildChatModel();
+                }
+                current = chatModel;
             }
-            current = current.getCause();
         }
-        return false;
+        return current;
     }
 
-    private String truncate(String value) {
-        if (value == null) {
-            return "<null>";
+    private String normalizeBaseUrl(URI target) {
+        String value = target.toString().trim();
+        if (value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
         }
-        return value.length() > 280 ? value.substring(0, 280) + "…" : value;
+        return value;
     }
 
-    void setHttpClient(HttpClient httpClient) {
-        this.httpClient = httpClient;
+    void setChatModel(ChatLanguageModel chatLanguageModel) {
+        this.chatModel = chatLanguageModel;
     }
 }

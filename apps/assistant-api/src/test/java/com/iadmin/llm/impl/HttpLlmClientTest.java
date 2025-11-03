@@ -4,34 +4,27 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.iadmin.llm.LlmException;
 import com.iadmin.report.Report;
-import java.io.IOException;
-import java.net.Authenticator;
-import java.net.CookieHandler;
-import java.net.ProxySelector;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpHeaders;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.output.Response;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLParameters;
-import javax.net.ssl.SSLSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HttpLlmClientTest {
 
     HttpLlmClient client;
+    StubChatLanguageModel chatModel;
 
     @BeforeEach
     void setUp() {
@@ -40,14 +33,12 @@ class HttpLlmClientTest {
         client.model = Optional.of("test-model");
         client.endpoint = "http://localhost/test";
         client.apiKey = Optional.empty();
+        chatModel = new StubChatLanguageModel("Hola mundo");
+        client.setChatModel(chatModel);
     }
 
     @Test
-    void extractContentFromOpenAIResponse() {
-        var payload = "{\"choices\":[{\"message\":{\"content\":\"Hola mundo\"}}]}";
-        var stub = new StubHttpClient(payload);
-        client.setHttpClient(stub);
-
+    void extractContentFromChatModel() {
         Report report = new Report(
                 new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
                 List.of(),
@@ -59,21 +50,30 @@ class HttpLlmClientTest {
     }
 
     @Test
-    void includeAuthorizationHeaderWhenApiKeyPresent() {
-        var payload = "{\"choices\":[{\"message\":{\"content\":\"Hola mundo\"}}]}";
-        var stub = new StubHttpClient(payload);
-        client.setHttpClient(stub);
-        client.apiKey = Optional.of("test-key");
-
+    void buildPromptFollowingGraniteCompletionsFormat() {
         Report report = new Report(
-                new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
-                List.of(),
-                "",
-                List.of());
+                new Report.TimeWindow(Instant.parse("2024-08-15T10:00:00Z"), Instant.parse("2024-08-15T10:15:00Z")),
+                List.of(new Report.Finding(
+                        "svc-a",
+                        "ns-1",
+                        "degraded",
+                        List.of("symptom"),
+                        List.of(),
+                        List.of(),
+                        Map.of(),
+                        List.of(),
+                        "cause",
+                        0.9,
+                        3)),
+                "Resumen",
+                List.of("recommendation"));
 
         client.redactReport(report);
 
-        assertEquals("Bearer test-key", stub.lastRequest.headers().firstValue("Authorization").orElse(null));
+        assertNotNull(chatModel.lastPrompt);
+        assertTrue(chatModel.lastPrompt.contains(HttpLlmClient.SYSTEM_PROMPT));
+        assertTrue(chatModel.lastPrompt.contains("```json"));
+        assertTrue(chatModel.lastPrompt.contains("\"svc-a\""));
     }
 
     @Test
@@ -91,9 +91,8 @@ class HttpLlmClientTest {
     }
 
     @Test
-    void failWithHelpfulMessageOnConnectionError() {
-        client.endpoint = "http://localhost:65535/test";
-        client.setHttpClient(new FailingHttpClient(new java.net.ConnectException("Connection refused")));
+    void fallbackMessageWhenResponseEmpty() {
+        chatModel.response = "   ";
 
         Report report = new Report(
                 new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
@@ -101,209 +100,28 @@ class HttpLlmClientTest {
                 "",
                 List.of());
 
-        LlmException ex = assertThrows(LlmException.class, () -> client.redactReport(report));
-        assertEquals(
-                "No se pudo conectar con el endpoint del LLM en 'http://localhost:65535/test'. Verifique la URL y que el servicio esté accesible.",
-                ex.getMessage());
+        String narrative = client.redactReport(report);
+        assertEquals("No se pudo interpretar la respuesta del LLM (fallback).", narrative);
     }
 
-    static class StubHttpClient extends HttpClient {
+    static class StubChatLanguageModel implements ChatLanguageModel {
 
-        private final String payload;
-        HttpRequest lastRequest;
+        String lastPrompt;
+        String response;
 
-        StubHttpClient(String payload) {
-            this.payload = payload;
+        StubChatLanguageModel(String response) {
+            this.response = response;
         }
 
         @Override
-        public Optional<CookieHandler> cookieHandler() {
-            return Optional.empty();
+        public String generate(String prompt) {
+            this.lastPrompt = prompt;
+            return response;
         }
 
         @Override
-        public Optional<Duration> connectTimeout() {
-            return Optional.empty();
-        }
-
-        @Override
-        public Redirect followRedirects() {
-            return Redirect.NEVER;
-        }
-
-        @Override
-        public Optional<ProxySelector> proxy() {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<Authenticator> authenticator() {
-            return Optional.empty();
-        }
-
-        @Override
-        public SSLContext sslContext() {
-            return null;
-        }
-
-        @Override
-        public SSLParameters sslParameters() {
-            return null;
-        }
-
-        @Override
-        public Optional<Executor> executor() {
-            return Optional.empty();
-        }
-
-        @Override
-        public Version version() {
-            return Version.HTTP_1_1;
-        }
-
-        @Override
-        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) {
-            lastRequest = request;
-            return new SimpleResponse<>(request, (T) payload);
-        }
-
-        @Override
-        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
-                HttpResponse.BodyHandler<T> responseBodyHandler) {
-            return CompletableFuture.completedFuture(send(request, responseBodyHandler));
-        }
-
-        @Override
-        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
-                HttpResponse.BodyHandler<T> responseBodyHandler, HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
-            return CompletableFuture.completedFuture(send(request, responseBodyHandler));
-        }
-
-        static class SimpleResponse<T> implements HttpResponse<T> {
-
-            private final HttpRequest request;
-            private final T body;
-
-            SimpleResponse(HttpRequest request, T body) {
-                this.request = request;
-                this.body = body;
-            }
-
-            @Override
-            public int statusCode() {
-                return 200;
-            }
-
-            @Override
-            public HttpRequest request() {
-                return request;
-            }
-
-            @Override
-            public Optional<HttpResponse<T>> previousResponse() {
-                return Optional.empty();
-            }
-
-            @Override
-            public HttpHeaders headers() {
-                return HttpHeaders.of(Map.of(), (a, b) -> true);
-            }
-
-            @Override
-            public T body() {
-                return body;
-            }
-
-            @Override
-            public Optional<SSLSession> sslSession() {
-                return Optional.empty();
-            }
-
-            @Override
-            public URI uri() {
-                return request.uri();
-            }
-
-            @Override
-            public Version version() {
-                return Version.HTTP_1_1;
-            }
-
-        }
-    }
-
-    static class FailingHttpClient extends HttpClient {
-
-        private final IOException toThrow;
-
-        FailingHttpClient(IOException toThrow) {
-            this.toThrow = toThrow;
-        }
-
-        @Override
-        public Optional<CookieHandler> cookieHandler() {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<Duration> connectTimeout() {
-            return Optional.empty();
-        }
-
-        @Override
-        public Redirect followRedirects() {
-            return Redirect.NEVER;
-        }
-
-        @Override
-        public Optional<ProxySelector> proxy() {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<Authenticator> authenticator() {
-            return Optional.empty();
-        }
-
-        @Override
-        public SSLContext sslContext() {
-            return null;
-        }
-
-        @Override
-        public SSLParameters sslParameters() {
-            return null;
-        }
-
-        @Override
-        public Optional<Executor> executor() {
-            return Optional.empty();
-        }
-
-        @Override
-        public Version version() {
-            return Version.HTTP_1_1;
-        }
-
-        @Override
-        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler)
-                throws IOException, InterruptedException {
-            throw toThrow;
-        }
-
-        @Override
-        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
-                HttpResponse.BodyHandler<T> responseBodyHandler) {
-            CompletableFuture<HttpResponse<T>> future = new CompletableFuture<>();
-            future.completeExceptionally(toThrow);
-            return future;
-        }
-
-        @Override
-        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
-                HttpResponse.BodyHandler<T> responseBodyHandler,
-                HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
-            return sendAsync(request, responseBodyHandler);
+        public Response<AiMessage> generate(List<ChatMessage> messages) {
+            throw new UnsupportedOperationException("Not required for this test");
         }
     }
 }
