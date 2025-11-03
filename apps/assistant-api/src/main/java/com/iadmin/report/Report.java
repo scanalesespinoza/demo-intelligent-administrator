@@ -8,7 +8,8 @@ public record Report(
         TimeWindow window,
         List<Finding> findings,
         String summary,
-        List<String> recommendations
+        List<String> recommendations,
+        DiagnosticContext context
 ) {
     public record TimeWindow(Instant from, Instant to) {
     }
@@ -24,7 +25,8 @@ public record Report(
             List<TimelineItem> timeline,
             String causeLikely,
             double confidence,
-            int severityScore
+            int severityScore,
+            FindingContext context
     ) {
     }
 
@@ -32,5 +34,27 @@ public record Report(
     }
 
     public static record TimelineItem(String t, String type, String text) {
+    }
+
+    public static record FindingContext(
+            Map<String, Number> metrics,
+            Map<String, DependencyHealth> dependencies,
+            List<String> evidenceCorrelations,
+            List<String> reasoningHints
+    ) {
+    }
+
+    public static record DependencyHealth(
+            String url,
+            String matchedService,
+            String status,
+            int restartCount,
+            int notReadyContainers,
+            int recentEvents,
+            List<String> signals
+    ) {
+    }
+
+    public static record DiagnosticContext(List<String> globalHints) {
     }
 }

@@ -97,9 +97,18 @@ public class DefaultK8sConnector implements K8sConnector {
                             .mapToInt(Integer::intValue)
                             .sum();
                     var containerStates = statuses.stream()
-                            .map(status -> new PodSummary.ContainerState(
-                                    status.getName(),
-                                    Boolean.TRUE.equals(status.getReady())))
+                            .map(status -> {
+                                var lastState = Optional.ofNullable(status.getLastState())
+                                        .map(io.fabric8.kubernetes.api.model.ContainerState::getTerminated)
+                                        .orElse(null);
+                                String terminationReason = lastState != null ? lastState.getReason() : null;
+                                Integer exitCode = lastState != null ? lastState.getExitCode() : null;
+                                return new PodSummary.ContainerState(
+                                        status.getName(),
+                                        Boolean.TRUE.equals(status.getReady()),
+                                        terminationReason,
+                                        exitCode);
+                            })
                             .toList();
                     String phase = Optional.ofNullable(pod.getStatus()).map(status -> status.getPhase()).orElse("Unknown");
                     return new PodSummary(

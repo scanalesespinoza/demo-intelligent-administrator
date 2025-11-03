@@ -63,11 +63,11 @@ class RuleBasedCorrelationServiceTest {
 
             pods = List.of(
                     new PodSummary("svc-a-123", "demo", "CrashLoopBackOff", 5,
-                            List.of(new PodSummary.ContainerState("main", false))),
+                            List.of(new PodSummary.ContainerState("main", false, null, null))),
                     new PodSummary("svc-a-456", "demo", "Running", 4,
-                            List.of(new PodSummary.ContainerState("main", true))),
+                            List.of(new PodSummary.ContainerState("main", true, null, null))),
                     new PodSummary("svc-b-111", "demo", "Running", 0,
-                            List.of(new PodSummary.ContainerState("main", true))));
+                            List.of(new PodSummary.ContainerState("main", true, null, null))));
 
             events = List.of(
                     new K8sEvent(Instant.parse("2024-01-01T00:05:00Z"), "Warning", "Liveness probe failed",

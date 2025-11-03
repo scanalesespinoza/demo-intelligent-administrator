@@ -43,7 +43,8 @@ class HttpLlmClientTest {
                 new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
                 List.of(),
                 "",
-                List.of());
+                List.of(),
+                new Report.DiagnosticContext(List.of()));
 
         String narrative = client.redactReport(report);
         assertEquals("Hola mundo", narrative);
@@ -64,9 +65,11 @@ class HttpLlmClientTest {
                         List.of(),
                         "cause",
                         0.9,
-                        3)),
+                        3,
+                        new Report.FindingContext(Map.of(), Map.of(), List.of(), List.of()))),
                 "Resumen",
-                List.of("recommendation"));
+                List.of("recommendation"),
+                new Report.DiagnosticContext(List.of("hint")));
 
         client.redactReport(report);
 
@@ -74,6 +77,7 @@ class HttpLlmClientTest {
         assertTrue(chatModel.lastPrompt.contains(HttpLlmClient.SYSTEM_PROMPT));
         assertTrue(chatModel.lastPrompt.contains("```json"));
         assertTrue(chatModel.lastPrompt.contains("\"svc-a\""));
+        assertTrue(chatModel.lastPrompt.contains("Indicaciones del analizador"));
     }
 
     @Test
@@ -84,7 +88,8 @@ class HttpLlmClientTest {
                 new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
                 List.of(),
                 "",
-                List.of());
+                List.of(),
+                new Report.DiagnosticContext(List.of()));
 
         LlmException ex = assertThrows(LlmException.class, () -> client.redactReport(report));
         assertEquals("llm.endpoint no configurado", ex.getMessage());
@@ -98,7 +103,8 @@ class HttpLlmClientTest {
                 new Report.TimeWindow(Instant.now(), Instant.now().plus(Duration.ofMinutes(5))),
                 List.of(),
                 "",
-                List.of());
+                List.of(),
+                new Report.DiagnosticContext(List.of()));
 
         String narrative = client.redactReport(report);
         assertEquals("No se pudo interpretar la respuesta del LLM (fallback).", narrative);
