@@ -60,6 +60,10 @@ public class RuleBasedCorrelationService implements CorrelationService {
             Pattern.compile("RANDOM_FAIL:(exit|loop|oom|io|probe)", Pattern.CASE_INSENSITIVE);
     private static final Pattern RE_URL =
             Pattern.compile("https?://[\\w\\-.]+(?::\\d+)?(?:/[\\w\\-./?%&=]*)?", Pattern.CASE_INSENSITIVE);
+    private static final Pattern RE_START_FAILURE =
+            Pattern.compile(
+                    "ContainerCannotRun|CreateContainerError|StartError|executable file not found|permission denied",
+                    Pattern.CASE_INSENSITIVE);
 
     @PostConstruct
     void init() {
@@ -365,6 +369,9 @@ public class RuleBasedCorrelationService implements CorrelationService {
                     signals.add("Liveness probe failed");
                 }
             }
+            if (RE_START_FAILURE.matcher(combined).find()) {
+                signals.add("StartFailure");
+            }
             if (combined.toLowerCase(Locale.ROOT).contains("oomkilled")) {
                 signals.add("OOMKilled");
                 eventOom = true;
@@ -418,6 +425,9 @@ public class RuleBasedCorrelationService implements CorrelationService {
         if (isOomLikely(summary)) {
             return "OOM";
         }
+        if (containsSignal(signals, "StartFailure")) {
+            return "StartFailure";
+        }
         if (containsSignal(signals, "RejectedExecution") || logsMatch(logs, RE_POOL)) {
             return "ThreadPoolExhaustion";
         }
@@ -454,6 +464,7 @@ public class RuleBasedCorrelationService implements CorrelationService {
             case "ImagePull" -> 0.85;
             case "Probe" -> 0.75;
             case "OOM" -> 0.8;
+            case "StartFailure" -> 0.8;
             case "ThreadPoolExhaustion" -> 0.7;
             case "Timeout" -> 0.65;
             case "RandomFail" -> 0.7;
@@ -878,7 +889,8 @@ public class RuleBasedCorrelationService implements CorrelationService {
         if (containsSignal(signalSet, "CrashLoopBackOff")
                 || containsSignal(signalSet, "ImagePullBackOff")
                 || containsSignal(signalSet, "Liveness probe failed")
-                || containsSignal(signalSet, "Readiness probe failed")) {
+                || containsSignal(signalSet, "Readiness probe failed")
+                || containsSignal(signalSet, "StartFailure")) {
             return "Stopped";
         }
         if (containsSignal(signalSet, "OOMKilled")
@@ -925,6 +937,7 @@ public class RuleBasedCorrelationService implements CorrelationService {
                 "ImagePull", "Verificar credenciales y disponibilidad de la imagen en el registro.",
                 "OOM", "Ajustar límites/memoria de los pods o revisar fugas en la aplicación.",
                 "Probe", "Revisar umbrales de probes y tiempos de arranque del servicio.",
+                "StartFailure", "Revisar el comando/entrypoint del contenedor y que los binarios referenciados existan.",
                 "Timeout", "Verificar latencia/errores en dependencias upstream y tiempos de espera.",
                 "RandomFail", "Analizar el componente random-failer y revisar los artefactos de falla.",
                 "ConfigMissing", "Confirmar que ConfigMaps/Secrets requeridos estén presentes y referenciados.");
