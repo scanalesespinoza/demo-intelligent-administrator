@@ -74,6 +74,7 @@
           {/if}
         </p>
         <p><strong>Causa probable:</strong> {f.causeLikely} ({f.confidence*100}% confianza)</p>
+        <p><strong>Recomendación:</strong> {report.recommendationForService(f.service) ?: 'Sin recomendación disponible.'}</p>
         <details>
           <summary>Ver evidencia y detalles</summary>
           <p><strong>Config Hints:</strong> {f.configHints}</p>
@@ -86,8 +87,6 @@
       </article>
     {/for}
 
-    <h3>💡 Recomendaciones</h3>
-    <ul>{#for r in report.recommendations}<li>{r}</li>{/for}</ul>
   </section>
   {/if}
 </body>

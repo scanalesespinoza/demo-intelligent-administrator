@@ -80,4 +80,54 @@ public record Report(
 
     public record TimelineItem(String t, String type, String text) {
     }
+
+    public String recommendationForService(String service) {
+        if (service == null) {
+            return null;
+        }
+        if (recommendations == null || recommendations.isEmpty()) {
+            return null;
+        }
+        String normalized = service.trim();
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        for (String recommendation : recommendations) {
+            if (recommendation == null || recommendation.isBlank()) {
+                continue;
+            }
+            String candidate = extractServiceFromRecommendation(recommendation);
+            if (candidate != null && candidate.equalsIgnoreCase(normalized)) {
+                return extractRecommendationMessage(recommendation);
+            }
+        }
+        return null;
+    }
+
+    private static String extractServiceFromRecommendation(String recommendation) {
+        if (recommendation == null) {
+            return null;
+        }
+        String header = recommendation;
+        int colonIndex = header.indexOf(':');
+        if (colonIndex >= 0) {
+            header = header.substring(0, colonIndex);
+        }
+        int statusIndex = header.indexOf(" (");
+        if (statusIndex >= 0) {
+            header = header.substring(0, statusIndex);
+        }
+        header = header.trim();
+        return header.isEmpty() ? null : header;
+    }
+
+    private static String extractRecommendationMessage(String recommendation) {
+        if (recommendation == null) {
+            return null;
+        }
+        int colonIndex = recommendation.indexOf(':');
+        String message = colonIndex >= 0 ? recommendation.substring(colonIndex + 1) : recommendation;
+        message = message.trim();
+        return message.isEmpty() ? null : message;
+    }
 }
