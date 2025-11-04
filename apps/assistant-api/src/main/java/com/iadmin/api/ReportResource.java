@@ -47,7 +47,12 @@ public class ReportResource {
         Instant fromInstant = from == null || from.isBlank()
                 ? toInstant.minus(Duration.ofMinutes(defaultWindowMin))
                 : Instant.parse(from);
-        int topN = Optional.ofNullable(topNParam).orElse(5);
+        int topN = Optional.ofNullable(topNParam).orElse(15);
+        if (topN < 1) {
+            topN = 1;
+        } else if (topN > 15) {
+            topN = 15;
+        }
         LOGGER.infov(
                 "[COMM-START] requestId={0} target=CorrelationService action=analyze ns={1} from={2} to={3} topN={4}",
                 requestId,

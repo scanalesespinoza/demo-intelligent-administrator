@@ -66,7 +66,13 @@
     {#for f in report.findings}
       <article class="finding">
         <h4>{f.service} — <span class="badge">{f.status}</span></h4>
-        <p><strong>Señales:</strong> {f.signals.join(', ')}</p>
+        <p><strong>Señales:</strong>
+          {#if f.describedSignals.isEmpty}
+            Sin evidencia de señales registradas.
+          {#else}
+            {f.describedSignals.join(', ')}
+          {/if}
+        </p>
         <p><strong>Causa probable:</strong> {f.causeLikely} ({f.confidence*100}% confianza)</p>
         <details>
           <summary>Ver evidencia y detalles</summary>

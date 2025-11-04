@@ -80,7 +80,12 @@ public class ChatResource {
             Instant from = Optional.ofNullable(safeReq.from()).map(Instant::parse)
                     .orElse(to.minus(Duration.ofMinutes(defaultWindowMin)));
 
-            int topN = Optional.ofNullable(safeReq.topN()).orElse(5);
+            int topN = Optional.ofNullable(safeReq.topN()).orElse(15);
+            if (topN < 1) {
+                topN = 1;
+            } else if (topN > 15) {
+                topN = 15;
+            }
             completed.add(currentStep);
 
             currentStep = "Generar informe correlacionado";
