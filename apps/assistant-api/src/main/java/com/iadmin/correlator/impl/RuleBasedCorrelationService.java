@@ -40,6 +40,20 @@ public class RuleBasedCorrelationService implements CorrelationService {
 
     private static final Logger LOGGER = Logger.getLogger("API.CorrelationService");
 
+    private static final int MIN_FINDINGS = 5;
+    private static final int MAX_FINDINGS = 15;
+
+    private static final Map<String, String> CAUSE_ADVICE = Map.ofEntries(
+            Map.entry("ThreadPoolExhaustion", "Revisar la configuración del pool de hilos y ajustar límites de concurrencia."),
+            Map.entry("ImagePull", "Verificar credenciales y disponibilidad de la imagen en el registro."),
+            Map.entry("OOM", "Ajustar límites/memoria de los pods o revisar fugas en la aplicación."),
+            Map.entry("Probe", "Revisar umbrales de probes y tiempos de arranque del servicio."),
+            Map.entry("StartFailure", "Revisar el comando/entrypoint del contenedor y que los binarios referenciados existan."),
+            Map.entry("Timeout", "Verificar latencia/errores en dependencias upstream y tiempos de espera."),
+            Map.entry("RandomFail", "Analizar el componente random-failer y revisar los artefactos de falla."),
+            Map.entry("ConfigMissing", "Confirmar que ConfigMaps/Secrets requeridos estén presentes y referenciados."),
+            Map.entry("Unknown", "Sin causa concluyente: recopilar métricas adicionales, eventos y trazas para confirmar el incidente."));
+
     @Inject
     K8sConnector k8s;
 
@@ -98,10 +112,12 @@ public class RuleBasedCorrelationService implements CorrelationService {
         record Candidate(String deploy, int score) {
         }
 
+        int effectiveTopN = clampTopN(topN);
+
         List<Candidate> ranked = deps.stream()
                 .map(d -> new Candidate(d.name(), severityFor(d, pods, events)))
                 .sorted(Comparator.comparingInt(Candidate::score).reversed())
-                .limit(Math.max(topN, 5))
+                .limit(effectiveTopN)
                 .toList();
 
         var healthIndex = buildHealthIndex(deps, pods, events);
@@ -166,6 +182,12 @@ public class RuleBasedCorrelationService implements CorrelationService {
         var globalHints = buildGlobalHints(findings);
 
         return new Report(new Report.TimeWindow(from, to), findings, summary, recs, new Report.DiagnosticContext(globalHints));
+    }
+
+    private int clampTopN(int requestedTopN) {
+        int effective = requestedTopN <= 0 ? MIN_FINDINGS : requestedTopN;
+        effective = Math.max(effective, MIN_FINDINGS);
+        return Math.min(effective, MAX_FINDINGS);
     }
 
     private int severityFor(DeploymentSummary d,
@@ -940,6 +962,7 @@ public class RuleBasedCorrelationService implements CorrelationService {
                 .filter(f -> !"Healthy".equalsIgnoreCase(f.status()))
                 .count();
 
+        String base;
         if (problematic == 0) {
             long totalServices = findings.size();
             long totalRestarts = findings.stream()
@@ -963,64 +986,193 @@ public class RuleBasedCorrelationService implements CorrelationService {
                     .filter(Objects::nonNull)
                     .mapToLong(metrics -> metrics.getOrDefault("notReadyContainers", 0).longValue())
                     .sum();
-            return String.format(Locale.ROOT,
+            base = String.format(Locale.ROOT,
                     "Todos los %d servicios analizados se reportan saludables (restarts=%d, eventos warning=%d, contenedores no listos=%d).",
                     totalServices,
                     totalRestarts,
                     totalWarnings,
                     notReady);
+        } else {
+            Map<String, Long> causeCounts = findings.stream()
+                    .map(Report.Finding::causeLikely)
+                    .filter(cause -> cause != null && !cause.equals("Unknown"))
+                    .collect(Collectors.groupingBy(cause -> cause, TreeMap::new, Collectors.counting()));
+
+            String causeSummary = causeCounts.isEmpty()
+                    ? "causas no determinadas"
+                    : causeCounts.entrySet().stream()
+                            .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                            .map(e -> e.getKey() + " (" + e.getValue() + ")")
+                            .collect(Collectors.joining(", "));
+
+            base = String.format(Locale.ROOT,
+                    "%d servicios con señales de incidencia; principales causas: %s.",
+                    problematic,
+                    causeSummary);
         }
 
-        Map<String, Long> causeCounts = findings.stream()
-                .map(Report.Finding::causeLikely)
-                .filter(cause -> cause != null && !cause.equals("Unknown"))
-                .collect(Collectors.groupingBy(cause -> cause, TreeMap::new, Collectors.counting()));
-
-        String causeSummary = causeCounts.isEmpty()
-                ? "causas no determinadas"
-                : causeCounts.entrySet().stream()
-                        .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                        .map(e -> e.getKey() + " (" + e.getValue() + ")")
-                        .collect(Collectors.joining(", "));
-
-        return String.format(Locale.ROOT,
-                "%d servicios con señales de incidencia; principales causas: %s.",
-                problematic,
-                causeSummary);
+        String limitNote = findings.size() >= MAX_FINDINGS
+                ? String.format(Locale.ROOT,
+                        " Se muestran %d despliegues priorizados (se alcanzó el máximo).",
+                        MAX_FINDINGS)
+                : String.format(Locale.ROOT,
+                        " Se listan hasta %d despliegues priorizados (máximo).",
+                        MAX_FINDINGS);
+        return base + limitNote;
     }
 
     private List<String> recommendations(List<Report.Finding> findings) {
-        Map<String, String> advice = new LinkedHashMap<>();
-        advice.put("ThreadPoolExhaustion", "Revisar la configuración del pool de hilos y ajustar límites de concurrencia.");
-        advice.put("ImagePull", "Verificar credenciales y disponibilidad de la imagen en el registro.");
-        advice.put("OOM", "Ajustar límites/memoria de los pods o revisar fugas en la aplicación.");
-        advice.put("Probe", "Revisar umbrales de probes y tiempos de arranque del servicio.");
-        advice.put("StartFailure", "Revisar el comando/entrypoint del contenedor y que los binarios referenciados existan.");
-        advice.put("Timeout", "Verificar latencia/errores en dependencias upstream y tiempos de espera.");
-        advice.put("RandomFail", "Analizar el componente random-failer y revisar los artefactos de falla.");
-        advice.put("ConfigMissing", "Confirmar que ConfigMaps/Secrets requeridos estén presentes y referenciados.");
-        advice.put("Unknown", "La causa sigue sin confirmarse; recopila métricas adicionales, eventos y trazas antes de escalar.");
-
-        List<String> recs = findings.stream()
-                .map(Report.Finding::causeLikely)
-                .filter(Objects::nonNull)
-                .distinct()
-                .map(cause -> advice.getOrDefault(cause, "Investigar manualmente la causa reportada."))
-                .toList();
-
-        if (recs.isEmpty()) {
-            boolean allHealthy = !findings.isEmpty()
-                    && findings.stream().allMatch(f -> "Healthy".equalsIgnoreCase(f.status()));
-            if (allHealthy) {
-                return List.of("Sin acciones correctivas: los servicios evaluados están saludables; mantener monitoreo preventivo.");
-            }
-            if (findings.isEmpty()) {
-                return List.of();
-            }
-            return List.of("Revisar manualmente la evidencia disponible y recopilar más datos del clúster.");
+        if (findings.isEmpty()) {
+            return List.of();
         }
 
+        List<String> recs = new ArrayList<>();
+        for (Report.Finding finding : findings) {
+            recs.add(buildRecommendationFor(finding));
+        }
         return recs;
+    }
+
+    private String buildRecommendationFor(Report.Finding finding) {
+        String service = Optional.ofNullable(finding.service()).orElse("despliegue sin nombre");
+        String status = Optional.ofNullable(finding.status()).orElse("desconocido");
+        String cause = Optional.ofNullable(finding.causeLikely()).orElse("Unknown");
+        String baseAdvice = CAUSE_ADVICE.getOrDefault(cause, "Investigar manualmente la causa reportada.");
+        if ("Healthy".equalsIgnoreCase(status)) {
+            baseAdvice = "Sin acciones correctivas: mantener monitoreo preventivo y confirmar que los indicadores sigan estables.";
+        }
+
+        Map<String, Number> metrics = Optional.ofNullable(finding.context())
+                .map(Report.FindingContext::metrics)
+                .orElse(Map.of());
+
+        String signalText = describeSignals(finding.signals());
+        String metricsText = summarizeMetrics(metrics, cause);
+
+        List<String> evidenceParts = new ArrayList<>();
+        if (!signalText.isBlank()) {
+            evidenceParts.add("señales: " + signalText);
+        } else {
+            evidenceParts.add("sin señales críticas registradas");
+        }
+        if (!metricsText.isBlank()) {
+            evidenceParts.add(metricsText);
+        }
+
+        String evidence = evidenceParts.isEmpty()
+                ? ""
+                : " Evidencia: " + String.join("; ", evidenceParts) + ".";
+
+        return String.format(Locale.ROOT, "%s (%s): %s%s", service, status, baseAdvice, evidence);
+    }
+
+    private String describeSignals(List<String> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return "";
+        }
+        return signals.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(this::describeSignal)
+                .distinct()
+                .collect(Collectors.joining(", "));
+    }
+
+    private String describeSignal(String signal) {
+        if (signal == null) {
+            return "";
+        }
+        String trimmed = signal.trim();
+        String normalized = switch (trimmed) {
+            case "CrashLoopBackOff" -> "reinicios continuos (CrashLoopBackOff)";
+            case "ImagePullBackOff" -> "fallas al obtener la imagen (ImagePullBackOff)";
+            case "Liveness probe failed" -> "falla en liveness probe";
+            case "Readiness probe failed" -> "falla en readiness probe";
+            case "HighRestarts" -> "reinicios elevados";
+            case "ContainerNotReady" -> "contenedores no listos";
+            case "OOMKilled" -> "terminaciones por OOM";
+            case "RejectedExecution" -> "pool de hilos saturado (RejectedExecution)";
+            case "timeout" -> "timeouts en dependencias";
+            case "ConfigMissing" -> "referencias de configuración ausentes";
+            case "StartFailure" -> "fallas al iniciar el contenedor";
+            case "NOT_FOUND" -> "sin datos operativos disponibles";
+            default -> trimmed;
+        };
+
+        if (normalized.equals(trimmed) && trimmed.startsWith("RANDOM_FAIL")) {
+            String suffix = trimmed.substring("RANDOM_FAIL".length());
+            if (suffix.startsWith(":")) {
+                suffix = suffix.substring(1);
+            }
+            if (suffix.isBlank()) {
+                return "fallo aleatorio inyectado";
+            }
+            return String.format(Locale.ROOT, "fallo aleatorio inyectado (%s)", suffix.toLowerCase(Locale.ROOT));
+        }
+
+        return normalized;
+    }
+
+    private String summarizeMetrics(Map<String, Number> metrics, String cause) {
+        if (metrics == null || metrics.isEmpty()) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        long podCount = longMetric(metrics, "podCount");
+        long restarts = longMetric(metrics, "totalRestarts");
+        long notReady = longMetric(metrics, "notReadyContainers");
+        long warnings = longMetric(metrics, "warningEvents");
+        long probeFailures = longMetric(metrics, "probeFailureEvents");
+        long logErrors = longMetric(metrics, "logErrorLines");
+
+        if (podCount > 0) {
+            parts.add("pods observados=" + podCount);
+        }
+        if (restarts > 0) {
+            parts.add("reinicios=" + restarts);
+        }
+        if (notReady > 0) {
+            parts.add("contenedores no listos=" + notReady);
+        }
+        if (warnings > 0) {
+            parts.add("eventos warning=" + warnings);
+        }
+        if (probeFailures > 0) {
+            parts.add("fallas de probe=" + probeFailures);
+        }
+        if (("ThreadPoolExhaustion".equals(cause) || "Timeout".equals(cause)) && logErrors > 0) {
+            parts.add("líneas de error en logs=" + logErrors);
+        }
+        if ("OOM".equals(cause)) {
+            long oomLogs = longMetric(metrics, "oomLogMentions");
+            long kernelEvents = longMetric(metrics, "kernelOomEvents");
+            if (oomLogs > 0) {
+                parts.add("menciones OOM en logs=" + oomLogs);
+            }
+            if (kernelEvents > 0) {
+                parts.add("señales del kernel por OOM=" + kernelEvents);
+            }
+        }
+
+        if (parts.isEmpty()) {
+            parts.add(String.format(Locale.ROOT,
+                    "métricas estables (reinicios=%d, warningEvents=%d, contenedores no listos=%d)",
+                    restarts,
+                    warnings,
+                    notReady));
+        }
+
+        return String.join(", ", parts);
+    }
+
+    private long longMetric(Map<String, Number> metrics, String key) {
+        if (metrics == null) {
+            return 0L;
+        }
+        return Optional.ofNullable(metrics.get(key))
+                .map(Number::longValue)
+                .orElse(0L);
     }
 
     private record SignalsSummary(

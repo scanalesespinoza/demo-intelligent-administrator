@@ -26,6 +26,8 @@ public class ApiClient {
 
     private static final Logger LOGGER = Logger.getLogger("UI.ApiClient");
 
+    private static final int MAX_FINDINGS = 15;
+
     @ConfigProperty(name = "assistant.api.url")
     String apiUrl;
 
@@ -79,7 +81,7 @@ public class ApiClient {
                     namespace,
                     from.toString(),
                     now.toString(),
-                    null);
+                    MAX_FINDINGS);
 
             currentStep = "Construir solicitud";
             pending.remove(currentStep);
