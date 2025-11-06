@@ -11,7 +11,7 @@ metadata:
   name: assistant-api-config
   namespace: demo-int-admin
 data:
-  QUARKUS_APPLICATION_VERSION: "0.0.1"
+  QUARKUS_APPLICATION_VERSION: "1.0.0"
   QUARKUS_HTTP_PORT: "8080"
   QUARKUS_LOG_CONSOLE_FORMAT: "%d{HH:mm:ss} %-5p [%c{2.}] (%t) %s%e%n"
   IADMIN_WINDOW_DEFAULT_MINUTES: "15"
@@ -61,7 +61,7 @@ spec:
       serviceAccountName: assistant-api
       containers:
         - name: app
-          image: quay.io/sergio_canales_e/iadmin/assistant-api:0.0.1
+          image: quay.io/sergio_canales_e/iadmin/assistant-api:1.0.0
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
