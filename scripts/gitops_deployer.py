@@ -128,7 +128,7 @@ def compute_image_overrides() -> Dict[str, str]:
     """Build the mapping of module -> fully-qualified container image."""
 
     registry = os.environ.get("IADMIN_IMAGE_REGISTRY", "quay.io/iadmin").rstrip("/")
-    tag = os.environ.get("IADMIN_IMAGE_TAG", "0.0.1")
+    tag = os.environ.get("IADMIN_IMAGE_TAG", "1.0.0")
     overrides: Dict[str, str] = {
         module: f"{registry}/{module}:{tag}"
         for module in SUPPORTED_MODULES

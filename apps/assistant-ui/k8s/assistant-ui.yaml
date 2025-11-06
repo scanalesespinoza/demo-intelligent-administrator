@@ -11,7 +11,7 @@ metadata:
   name: assistant-ui-config
   namespace: demo-int-admin
 data:
-  QUARKUS_APPLICATION_VERSION: "0.0.1"
+  QUARKUS_APPLICATION_VERSION: "1.0.0"
   QUARKUS_HTTP_PORT: "8081"
   QUARKUS_QUTE_STRICT_RENDERING: "false"
   ASSISTANT_API_URL: "http://assistant-api.demo-int-admin.svc.cluster.local"
@@ -34,7 +34,7 @@ spec:
       serviceAccountName: assistant-ui
       containers:
         - name: app
-          image: quay.io/sergio_canales_e/iadmin/assistant-ui:0.0.1
+          image: quay.io/sergio_canales_e/iadmin/assistant-ui:1.0.0
           imagePullPolicy: Always
           ports:
             - containerPort: 8081
